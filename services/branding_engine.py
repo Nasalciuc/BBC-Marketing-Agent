@@ -9,6 +9,8 @@ from urllib.request import urlopen
 
 from PIL import Image, ImageDraw, ImageFont
 
+from services.image_enhancer import prepare_image, smart_resize
+
 ROOT = Path(__file__).parent.parent
 TEMPLATES_DIR = ROOT / "templates"
 DEFAULT_LOGO = ROOT / "assets" / "logos" / "bbc_logo_white.png"
@@ -51,18 +53,6 @@ def get_font(bold: bool = True, size: int = 48) -> ImageFont.FreeTypeFont | Imag
     return ImageFont.load_default()
 
 
-def resize_cover(image: Image.Image, width: int, height: int) -> Image.Image:
-    """CSS object-fit: cover — scale and center-crop."""
-    src_w, src_h = image.size
-    scale = max(width / src_w, height / src_h)
-    new_w = int(src_w * scale)
-    new_h = int(src_h * scale)
-    resized = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
-    left = (new_w - width) // 2
-    top = (new_h - height) // 2
-    return resized.crop((left, top, left + width, top + height))
-
-
 def _load_background(source: str, width: int, height: int) -> Image.Image:
     parsed = urlparse(source)
     if parsed.scheme in ("http", "https"):
@@ -73,8 +63,7 @@ def _load_background(source: str, width: int, height: int) -> Image.Image:
         if not path.is_absolute():
             path = ROOT / path
         img = Image.open(path)
-    img = img.convert("RGB")
-    return resize_cover(img, width, height)
+    return prepare_image(img, (width, height))
 
 
 def _apply_gradient(
