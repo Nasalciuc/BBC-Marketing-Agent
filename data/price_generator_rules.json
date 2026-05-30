@@ -1,0 +1,208 @@
+{
+  "letters": {
+    "J": {
+      "business": 62,
+      "premium_economy": 35,
+      "first": 108
+    },
+    "F": {
+      "business": 60,
+      "premium_economy": 34,
+      "first": 104
+    },
+    "K": {
+      "business": 44,
+      "premium_economy": 25,
+      "first": 77
+    },
+    "L": {
+      "business": 48,
+      "premium_economy": 27,
+      "first": 84
+    },
+    "H": {
+      "business": 36,
+      "premium_economy": 20,
+      "first": 63
+    },
+    "R": {
+      "business": 33,
+      "premium_economy": 18,
+      "first": 57
+    },
+    "N": {
+      "business": 69,
+      "premium_economy": 39,
+      "first": 120
+    },
+    "C": {
+      "business": 44,
+      "premium_economy": 25,
+      "first": 77
+    },
+    "E": {
+      "business": 40,
+      "premium_economy": 22,
+      "first": 70
+    },
+    "T": {
+      "business": 71,
+      "premium_economy": 40,
+      "first": 124
+    },
+    "S": {
+      "business": 60,
+      "premium_economy": 34,
+      "first": 104
+    },
+    "Y": {
+      "business": 22,
+      "premium_economy": 12,
+      "first": 38
+    },
+    "D": {
+      "business": 23,
+      "premium_economy": 13,
+      "first": 40
+    },
+    "A": {
+      "business": 50,
+      "premium_economy": 598,
+      "first": -983
+    },
+    "M": {
+      "business": 52,
+      "premium_economy": -541,
+      "first": 1063
+    },
+    "B": {
+      "business": 20,
+      "premium_economy": -52,
+      "first": -46
+    },
+    "O": {
+      "business": 36,
+      "premium_economy": 1035,
+      "first": -1355
+    },
+    "I": {
+      "business": 31,
+      "premium_economy": -630,
+      "first": 315
+    },
+    "G": {
+      "business": 42,
+      "premium_economy": 72,
+      "first": 37
+    },
+    "P": {
+      "business": 56,
+      "premium_economy": 36,
+      "first": -2
+    },
+    "W": {
+      "business": 70,
+      "premium_economy": 212,
+      "first": -244
+    },
+    "U": {
+      "business": 43,
+      "premium_economy": 135,
+      "first": 179
+    },
+    "X": {
+      "business": 39,
+      "premium_economy": 502,
+      "first": -291
+    },
+    "Z": {
+      "business": 70,
+      "premium_economy": 281,
+      "first": 587
+    },
+    "V": {
+      "business": 24,
+      "premium_economy": 336,
+      "first": -330
+    },
+    "Q": {
+      "premium_economy": 0,
+      "business": 0,
+      "first": 0
+    }
+  },
+  "continents_pair": {
+    "NA-EU": {
+      "round_trip": {
+        "business": 1750,
+        "premium_economy": 976,
+        "first": 3042
+      },
+      "one_way": {
+        "business": 1228,
+        "premium_economy": 786,
+        "first": 2002
+      }
+    },
+    "NA-AS": {
+      "round_trip": {
+        "business": 2060,
+        "premium_economy": 1439,
+        "first": 3004
+      },
+      "one_way": {
+        "business": 1410,
+        "premium_economy": 939,
+        "first": 2114
+      }
+    },
+    "NA-OC": {
+      "round_trip": {
+        "business": 2580,
+        "premium_economy": 2065,
+        "first": 3403
+      },
+      "one_way": {
+        "business": 1883,
+        "premium_economy": 1485,
+        "first": 2593
+      }
+    },
+    "NA-SA": {
+      "round_trip": {
+        "business": 1060,
+        "premium_economy": 772,
+        "first": 2357
+      },
+      "one_way": {
+        "business": 609,
+        "premium_economy": 582,
+        "first": 1247
+      }
+    },
+    "NA-AF": {
+      "round_trip": {
+        "business": 2170,
+        "premium_economy": 1148,
+        "first": 3005
+      },
+      "one_way": {
+        "business": 1480,
+        "premium_economy": 1118,
+        "first": 2245
+      }
+    },
+    "LOCAL": {
+      "round_trip": {
+        "business": 370,
+        "premium_economy": -736,
+        "first": 1766
+      },
+      "one_way": {
+        "business": 240,
+        "premium_economy": -811,
+        "first": 1661
+      }
+    }
+  }
+}

@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Data / runtime
+downloads/
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp scripts (dev only)
+_fetch_bbc_rules.py
+_derive_rules.py
+_build_rules.py
+_debug_letters.py
+_api_prices.json
+
+# Isolated reference repos
+ghostwriter/
+tiktok-to-youtube-bot/
+
+# Assets (binary — add via LFS or manual deploy)
+assets/fonts/*.ttf
+assets/logos/*.png
+assets/defaults/*.jpg
