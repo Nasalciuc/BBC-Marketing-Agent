@@ -15,5 +15,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: pytest tests/test_pricing.py -v
+      - run: python scripts/ensure_default_background.py
+      - run: pytest tests/test_pricing.py tests/test_branding.py -v
       - run: ruff check config.py services/ tests/

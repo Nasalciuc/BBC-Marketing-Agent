@@ -1,1 +1,65 @@
-
+{
+  "name": "deal_landscape",
+  "description": "BBC branded deal image — landscape format for WhatsApp",
+  "canvas": {
+    "width": 1200,
+    "height": 628,
+    "format": "JPEG",
+    "quality": 92
+  },
+  "gradient": {
+    "color": "#0B1829",
+    "opacity_start": 0.90,
+    "opacity_end": 0.0,
+    "width_percent": 60,
+    "direction": "left_to_right"
+  },
+  "logo": {
+    "path": "assets/logos/bbc_logo_white.png",
+    "x": 40,
+    "y": 30,
+    "width": 180,
+    "fallback_text": "BuyBusinessClass.com",
+    "fallback_font_size": 22,
+    "fallback_color": "#FFFFFF"
+  },
+  "badge": {
+    "x": 40,
+    "y": 340,
+    "font_size": 20,
+    "text_color": "#0B1829",
+    "bg_color": "#C9A54E",
+    "padding_h": 12,
+    "padding_v": 8,
+    "border_radius": 8
+  },
+  "route": {
+    "x": 40,
+    "y": 400,
+    "font_size": 48,
+    "color": "#FFFFFF"
+  },
+  "price_prefix": {
+    "x": 40,
+    "y": 472,
+    "text": "From ",
+    "font_size": 24,
+    "color": "#C9A54E"
+  },
+  "price": {
+    "font_size": 52,
+    "color": "#C9A54E"
+  },
+  "cta": {
+    "x": 40,
+    "y": 540,
+    "text": "Book now · buybusinessclass.com",
+    "font_size": 16,
+    "color": "#C9A54E"
+  },
+  "bottom_bar": {
+    "y": 620,
+    "height": 8,
+    "color": "#C9A54E"
+  }
+}

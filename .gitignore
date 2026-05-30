@@ -24,6 +24,7 @@ htmlcov/
 # Data / runtime
 downloads/
 *.sqlite
+output/
 
 # OS
 .DS_Store
@@ -44,3 +45,4 @@ tiktok-to-youtube-bot/
 assets/fonts/*.ttf
 assets/logos/*.png
 assets/defaults/*.jpg
+!assets/defaults/default_background.jpg
