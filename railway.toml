@@ -2,6 +2,6 @@
 builder = "dockerfile"
 
 [deploy]
-startCommand = "uvicorn webhook:app --host 0.0.0.0 --port ${PORT:-8080}"
+startCommand = "uvicorn webhook:app --host 0.0.0.0 --port 8080"
 healthcheckPath = "/health"
 restartPolicyType = "ON_FAILURE"
