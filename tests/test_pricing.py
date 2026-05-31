@@ -1,5 +1,4 @@
 """Teste pentru pricing engine — verifică formula BBC."""
-import pytest
 from services.pricing_engine import calculate_price, get_all_cabin_prices, format_price
 
 

@@ -9,7 +9,7 @@ from urllib.request import urlopen
 
 from PIL import Image, ImageDraw, ImageFont
 
-from services.image_enhancer import prepare_image, smart_resize
+from services.image_enhancer import prepare_image
 
 ROOT = Path(__file__).parent.parent
 TEMPLATES_DIR = ROOT / "templates"
