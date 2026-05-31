@@ -96,71 +96,49 @@ async def telegram_webhook(request: Request):
 
         log.info("Message from %s: %s", chat_id, text)
 
+        from services.telegram_client import send_message
+
         if text == "/start":
-            await _send_telegram_message(
+            await send_message(
                 chat_id,
                 "🏢 *BBC Marketing Agent*\n\n"
                 "I'll send you deal previews for approval.\n"
                 "Use the ✅/❌ buttons to approve or reject.",
             )
         elif text == "/status":
-            await _send_telegram_message(chat_id, await _get_status_text())
+            await send_message(chat_id, await _get_status_text())
 
     return {"ok": True}
 
 
 async def _handle_approve(campaign_id: str, callback_id: str):
     """Procesează aprobarea unui deal."""
+    from services.sheets_client import update_deal_status
+    from services.supabase_client import update_campaign_status
+    from services.telegram_client import answer_callback_query
+
     try:
-        await _answer_callback(callback_id, f"✅ Approved: {campaign_id}")
-        log.info("Deal %s approved — status update pending implementation", campaign_id)
+        await answer_callback_query(callback_id, f"✅ Approved: {campaign_id}")
+        update_deal_status(campaign_id, "approved")
+        await update_campaign_status(campaign_id, "approved")
+        log.info("Deal %s approved — status updated", campaign_id)
     except Exception as e:
         log.error("Error handling approve: %s", e)
 
 
 async def _handle_reject(campaign_id: str, callback_id: str):
     """Procesează respingerea unui deal."""
+    from services.sheets_client import update_deal_status
+    from services.supabase_client import update_campaign_status
+    from services.telegram_client import answer_callback_query
+
     try:
-        await _answer_callback(callback_id, f"❌ Rejected: {campaign_id}")
-        log.info("Deal %s rejected — status update pending implementation", campaign_id)
+        await answer_callback_query(callback_id, f"❌ Rejected: {campaign_id}")
+        update_deal_status(campaign_id, "rejected")
+        await update_campaign_status(campaign_id, "rejected")
+        log.info("Deal %s rejected — status updated", campaign_id)
     except Exception as e:
         log.error("Error handling reject: %s", e)
-
-
-async def _answer_callback(callback_id: str, text: str):
-    """Răspunde la Telegram callback query."""
-    try:
-        import httpx
-
-        from config import settings
-
-        if not settings.telegram_bot_token:
-            return
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"https://api.telegram.org/bot{settings.telegram_bot_token}/answerCallbackQuery",
-                json={"callback_query_id": callback_id, "text": text},
-            )
-    except Exception as e:
-        log.error("Failed to answer callback: %s", e)
-
-
-async def _send_telegram_message(chat_id, text: str):
-    """Trimite mesaj pe Telegram."""
-    try:
-        import httpx
-
-        from config import settings
-
-        if not settings.telegram_bot_token:
-            return
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage",
-                json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
-            )
-    except Exception as e:
-        log.error("Failed to send message: %s", e)
 
 
 async def _get_status_text() -> str:
