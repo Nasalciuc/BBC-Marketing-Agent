@@ -42,6 +42,49 @@ async def root():
     return {"service": "BBC Marketing Agent", "status": "running"}
 
 
+@app.get("/debug/gemini")
+async def debug_gemini(full: bool = False):
+    """Test Gemini API (folosește GEMINI_API_KEY de pe Railway)."""
+    import asyncio
+
+    from config import settings
+
+    if not settings.gemini_api_key:
+        return {"ok": False, "error": "GEMINI_API_KEY not set"}
+
+    if not full:
+        def _ping():
+            from google import genai
+
+            client = genai.Client(api_key=settings.gemini_api_key)
+            r = client.models.generate_content(
+                model=settings.gemini_model,
+                contents="Reply with exactly: GEMINI_OK",
+            )
+            return (r.text or "").strip()[:200]
+
+        try:
+            text = await asyncio.to_thread(_ping)
+            return {"ok": True, "mode": "ping", "model": settings.gemini_model, "text": text}
+        except Exception as e:
+            log.error("Gemini ping failed: %s", e)
+            return {"ok": False, "error": str(e)}
+
+    from services.gemini_client import discover_events
+
+    try:
+        events = await discover_events(week_offset=1)
+        return {
+            "ok": True,
+            "mode": "discovery",
+            "events_count": len(events),
+            "events": events[:3],
+        }
+    except Exception as e:
+        log.error("Gemini discovery failed: %s", e)
+        return {"ok": False, "error": str(e)}
+
+
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
     """
