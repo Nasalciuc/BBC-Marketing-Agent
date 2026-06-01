@@ -129,7 +129,25 @@ async def run_discovery():
         save_drafts(events)
 
         log.info("Sending Telegram approval requests...")
-        await send_deals_for_approval(events)
+        from config import settings
+
+        review_results = await send_deals_for_approval(events)
+
+        if settings.supabase_url and settings.supabase_key:
+            try:
+                from supabase import create_client
+
+                sb = create_client(settings.supabase_url, settings.supabase_key)
+                for event, result in zip(events, review_results or []):
+                    if result and result.get("message_id"):
+                        sb.table("campaigns").update(
+                            {
+                                "review_chat_id": result["chat_id"],
+                                "review_message_id": result["message_id"],
+                            }
+                        ).eq("campaign_id", event.get("campaign_id", "")).execute()
+            except Exception as e:
+                log.warning("Save review IDs: %s", e)
 
         await record_job_complete(job_id, events_count=len(events))
         log.info("Discovery complete! %d deals ready for approval.", len(events))

@@ -88,15 +88,18 @@ async def send_photo(
         return None
 
 
-async def answer_callback_query(callback_id: str, text: str) -> dict | None:
+async def answer_callback_query(callback_id: str, text: str = "") -> dict | None:
     """Răspunde la callback query (elimină loading de pe buton)."""
     if not settings.telegram_bot_token:
         return None
+    payload: dict = {"callback_query_id": callback_id}
+    if text:
+        payload["text"] = text
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
                 _bot_url("answerCallbackQuery"),
-                json={"callback_query_id": callback_id, "text": text},
+                json=payload,
             )
             return resp.json()
     except Exception as e:
@@ -104,38 +107,67 @@ async def answer_callback_query(callback_id: str, text: str) -> dict | None:
         return None
 
 
-async def send_approval_request(event: dict, chat_id: str | int | None = None):
-    """Trimite un deal pentru aprobare cu imagine + butoane ✅❌."""
+async def edit_message_reply_markup(
+    chat_id: int | str,
+    message_id: int,
+    reply_markup: dict | None = None,
+) -> dict | None:
+    """Editează butoanele unui mesaj (înlocuiește keyboard sau scoate)."""
+    if not settings.telegram_bot_token:
+        return None
+    payload: dict = {"chat_id": chat_id, "message_id": message_id}
+    if reply_markup:
+        payload["reply_markup"] = json.dumps(reply_markup)
+    else:
+        payload["reply_markup"] = json.dumps({"inline_keyboard": []})
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(_bot_url("editMessageReplyMarkup"), json=payload)
+            return resp.json()
+    except Exception as e:
+        log.warning("Edit markup failed: %s", e)
+        return None
+
+
+async def send_approval_request(
+    event: dict, chat_id: str | int | None = None
+) -> dict | None:
+    """Trimite un deal pentru aprobare cu imagine + butoane review."""
+    from keyboards import review_keyboard
+
     campaign_id = event.get("campaign_id", "unknown")
-
     caption = format_telegram_preview(event)
-
-    keyboard = {
-        "inline_keyboard": [
-            [
-                {"text": "✅ Approve", "callback_data": f"approve_{campaign_id}"},
-                {"text": "❌ Reject", "callback_data": f"reject_{campaign_id}"},
-            ]
-        ]
-    }
+    keyboard = review_keyboard(campaign_id)
+    target_chat = chat_id or settings.telegram_chat_id
 
     image_url = event.get("image_url")
     if image_url:
-        await send_photo(
-            chat_id=chat_id,
+        result = await send_photo(
+            chat_id=target_chat,
             photo_url=image_url,
             caption=caption,
             reply_markup=keyboard,
         )
     else:
-        await send_message(chat_id=chat_id, text=caption, reply_markup=keyboard)
+        result = await send_message(chat_id=target_chat, text=caption, reply_markup=keyboard)
+
+    msg_id = None
+    if isinstance(result, dict):
+        msg_id = result.get("result", {}).get("message_id")
+
+    return {"chat_id": target_chat, "message_id": msg_id}
 
 
-async def send_deals_for_approval(events: list[dict]):
+async def send_deals_for_approval(
+    events: list[dict], chat_id: str | int | None = None
+) -> list[dict | None]:
     """Trimite toate deal-urile pentru aprobare."""
+    results: list[dict | None] = []
     for event in events:
-        await send_approval_request(event)
+        result = await send_approval_request(event, chat_id=chat_id)
+        results.append(result)
         await asyncio.sleep(0.5)
+    return results
 
 
 async def send_alert(message: str):

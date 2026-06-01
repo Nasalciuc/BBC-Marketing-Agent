@@ -87,19 +87,15 @@ async def debug_gemini(full: bool = False):
 
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
-    """
-    Primește callbacks de la Telegram (approve/reject).
-    Telegram trimite POST cu Update JSON când Scaler apasă un buton.
-    """
+    """Telegram webhook — dispatch la handlers."""
     try:
         from config import settings
 
-        expected_secret = settings.telegram_webhook_secret
-        received_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-
-        if expected_secret and received_secret != expected_secret:
+        expected = settings.telegram_webhook_secret
+        received = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if expected and received != expected:
             log.warning("Invalid Telegram webhook secret")
-            return {"ok": False, "error": "invalid secret"}
+            return {"ok": False}
     except Exception:
         pass
 
@@ -108,92 +104,138 @@ async def telegram_webhook(request: Request):
         log.info("Telegram update received: %s", list(data.keys()))
     except Exception as e:
         log.error("Failed to parse Telegram update: %s", e)
-        return {"ok": False, "error": "invalid json"}
+        return {"ok": False}
 
     if "callback_query" in data:
-        callback = data["callback_query"]
-        callback_data = callback.get("data", "")
-        callback_id = callback.get("id", "")
-        user = callback.get("from", {}).get("first_name", "Unknown")
+        cb = data["callback_query"]
+        callback_id = cb.get("id", "")
+        callback_data = cb.get("data", "")
+        user_id = cb.get("from", {}).get("id", 0)
+        chat_id = cb.get("message", {}).get("chat", {}).get("id", 0)
+        message_id = cb.get("message", {}).get("message_id", 0)
 
-        log.info("Callback from %s: %s", user, callback_data)
+        from handlers.common import is_admin
 
-        if "_" in callback_data:
-            action, campaign_id = callback_data.split("_", 1)
+        if not is_admin(user_id):
+            from services.telegram_client import answer_callback_query
 
-            if action == "approve":
-                log.info("Deal APPROVED: %s by %s", campaign_id, user)
-                await _handle_approve(campaign_id, callback_id)
-            elif action == "reject":
-                log.info("Deal REJECTED: %s by %s", campaign_id, user)
-                await _handle_reject(campaign_id, callback_id)
-            else:
-                log.warning("Unknown action: %s", action)
+            await answer_callback_query(callback_id, "⛔ Access denied")
+            return {"ok": True}
+
+        if callback_data == "noop":
+            from services.telegram_client import answer_callback_query
+
+            await answer_callback_query(callback_id)
+            return {"ok": True}
+
+        from keyboards import parse_callback
+
+        action, campaign_id = parse_callback(callback_data)
+        log.info("Callback action=%s campaign=%s user=%s", action, campaign_id, user_id)
+
+        if action == "approve":
+            from handlers.review import handle_approve
+
+            await handle_approve(campaign_id, callback_id, chat_id, message_id)
+        elif action == "reject":
+            from handlers.review import handle_reject
+
+            await handle_reject(campaign_id, callback_id, chat_id, message_id)
+        elif action == "edit":
+            from handlers.review import handle_edit_caption
+
+            await handle_edit_caption(campaign_id, callback_id, chat_id)
+        elif action == "regen":
+            from handlers.review import handle_regenerate
+
+            await handle_regenerate(campaign_id, callback_id, chat_id)
+        elif action == "postnow":
+            from handlers.urgent import handle_post_now
+
+            await handle_post_now(campaign_id, callback_id, chat_id, message_id)
+        elif action == "schedule":
+            from handlers.urgent import handle_schedule
+
+            await handle_schedule(campaign_id, callback_id, chat_id, message_id)
+        elif action == "cancel":
+            from services.telegram_client import answer_callback_query
+
+            try:
+                from services.supabase_client import update_campaign_status
+
+                await update_campaign_status(campaign_id, "cancelled")
+            except Exception:
+                pass
+            await answer_callback_query(callback_id, "❌ Cancelled")
         else:
-            log.warning("Unparseable callback_data: %s", callback_data)
+            log.warning("Unknown callback: %s", callback_data)
 
     elif "message" in data:
-        message = data["message"]
-        text = message.get("text", "")
-        chat_id = message.get("chat", {}).get("id", "")
+        msg = data["message"]
+        text = (msg.get("text") or "").strip()
+        chat_id = msg.get("chat", {}).get("id", 0)
+        user_id = msg.get("from", {}).get("id", 0)
 
-        log.info("Message from %s: %s", chat_id, text)
+        from handlers.common import is_admin
 
-        from services.telegram_client import send_message
+        if not is_admin(user_id):
+            from services.telegram_client import send_message
 
-        if text == "/start":
-            await send_message(
-                chat_id,
-                "🏢 *BBC Marketing Agent*\n\n"
-                "I'll send you deal previews for approval.\n"
-                "Use the ✅/❌ buttons to approve or reject.",
-            )
-        elif text == "/status":
-            await send_message(chat_id, await _get_status_text())
+            await send_message(chat_id=chat_id, text="⛔ Access denied.")
+            return {"ok": True}
+
+        if text.startswith("/start") or text.startswith("/help"):
+            from handlers.common import handle_start
+
+            await handle_start(chat_id)
+        elif text.startswith("/status"):
+            from handlers.common import handle_status
+
+            await handle_status(chat_id)
+        elif text.startswith("/cancel"):
+            from services.telegram_client import send_message
+
+            try:
+                from config import settings as s
+
+                if s.supabase_url and s.supabase_key:
+                    from supabase import create_client
+
+                    sb = create_client(s.supabase_url, s.supabase_key)
+                    sb.table("campaigns").update({"status": "draft"}).eq(
+                        "status", "editing"
+                    ).execute()
+            except Exception:
+                pass
+            await send_message(chat_id=chat_id, text="✅ Cancelled.")
+        elif text and not text.startswith("/"):
+            editing_id = None
+            try:
+                from config import settings as s
+
+                if s.supabase_url and s.supabase_key:
+                    from supabase import create_client
+
+                    sb = create_client(s.supabase_url, s.supabase_key)
+                    r = (
+                        sb.table("campaigns")
+                        .select("campaign_id")
+                        .eq("status", "editing")
+                        .limit(1)
+                        .execute()
+                    )
+                    if r.data:
+                        editing_id = r.data[0]["campaign_id"]
+            except Exception:
+                pass
+
+            if editing_id:
+                from handlers.review import handle_caption_reply
+
+                await handle_caption_reply(editing_id, text, chat_id)
+            else:
+                from handlers.urgent import handle_urgent_request
+
+                await handle_urgent_request(chat_id, text)
 
     return {"ok": True}
-
-
-async def _handle_approve(campaign_id: str, callback_id: str):
-    """Procesează aprobarea unui deal."""
-    from services.sheets_client import update_deal_status
-    from services.supabase_client import update_campaign_status
-    from services.telegram_client import answer_callback_query
-
-    try:
-        await answer_callback_query(callback_id, f"✅ Approved: {campaign_id}")
-        update_deal_status(campaign_id, "approved")
-        await update_campaign_status(campaign_id, "approved")
-        log.info("Deal %s approved — status updated", campaign_id)
-    except Exception as e:
-        log.error("Error handling approve: %s", e)
-
-
-async def _handle_reject(campaign_id: str, callback_id: str):
-    """Procesează respingerea unui deal."""
-    from services.sheets_client import update_deal_status
-    from services.supabase_client import update_campaign_status
-    from services.telegram_client import answer_callback_query
-
-    try:
-        await answer_callback_query(callback_id, f"❌ Rejected: {campaign_id}")
-        update_deal_status(campaign_id, "rejected")
-        await update_campaign_status(campaign_id, "rejected")
-        log.info("Deal %s rejected — status updated", campaign_id)
-    except Exception as e:
-        log.error("Error handling reject: %s", e)
-
-
-async def _get_status_text() -> str:
-    """Generează text status pentru /status command."""
-    lines = ["📊 *BBC Marketing Agent Status*\n"]
-    try:
-        from config import settings
-
-        lines.append(f"🔑 Gemini: {'✅' if settings.gemini_api_key else '❌'}")
-        lines.append(f"🗄️ Supabase: {'✅' if settings.supabase_url else '❌'}")
-        lines.append(f"📋 Sheets: {'✅' if settings.google_sheets_id else '❌'}")
-        lines.append(f"📱 Telegram: {'✅' if settings.telegram_bot_token else '❌'}")
-    except Exception:
-        lines.append("⚠️ Config error")
-    return "\n".join(lines)

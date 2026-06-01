@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_webhook_secret: str = ""
+    telegram_admin_ids: str = ""
 
     # WAHA (WhatsApp group posting)
     waha_url: str = "http://localhost:3000"
@@ -56,6 +57,12 @@ class Settings(BaseSettings):
     # Environment
     debug: bool = False
     environment: str = "development"
+
+    @property
+    def admin_ids(self) -> set[int]:
+        """Admin user IDs — din telegram_admin_ids sau fallback telegram_chat_id."""
+        raw = self.telegram_admin_ids or self.telegram_chat_id
+        return {int(x.strip()) for x in raw.split(",") if x.strip().isdigit()}
 
     model_config = SettingsConfigDict(
         env_file=".env",
