@@ -8,6 +8,7 @@ anthropic>=0.40.0
 
 # Image processing
 Pillow>=11.0.0
+playwright>=1.40.0
 
 # HTTP clients
 httpx>=0.28.0

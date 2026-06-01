@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    width: 1200px;
+    height: 628px;
+    overflow: hidden;
+    font-family: 'Inter', sans-serif;
+    position: relative;
+  }
+
+  .background {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-image: url('{{BACKGROUND_IMAGE}}');
+    background-size: cover;
+    background-position: center;
+  }
+
+  .overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: linear-gradient(
+      to right,
+      rgba(11, 24, 41, 0.92) 0%,
+      rgba(11, 24, 41, 0.85) 35%,
+      rgba(11, 24, 41, 0.4) 65%,
+      rgba(11, 24, 41, 0.05) 100%
+    );
+  }
+
+  .content {
+    position: relative;
+    z-index: 2;
+    padding: 40px 48px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  .logo img {
+    height: 48px;
+    width: auto;
+    filter: brightness(0) invert(1);
+    opacity: 0.95;
+  }
+
+  .logo-text {
+    font-size: 22px;
+    font-weight: 700;
+    color: #ffffff;
+    letter-spacing: 0.5px;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+  }
+
+  .deal-info {
+    max-width: 560px;
+  }
+
+  .badge {
+    display: inline-block;
+    background: #C9A54E;
+    color: #0B1829;
+    font-size: 15px;
+    font-weight: 700;
+    padding: 6px 16px;
+    border-radius: 6px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  }
+
+  .route {
+    font-size: 44px;
+    font-weight: 800;
+    color: #FFFFFF;
+    line-height: 1.1;
+    text-shadow: 0 2px 16px rgba(0, 0, 0, 0.6);
+    margin-bottom: 8px;
+    letter-spacing: -0.5px;
+  }
+
+  .price-section {
+    margin-top: 4px;
+  }
+
+  .price-label {
+    font-size: 15px;
+    font-weight: 300;
+    color: #C9A54E;
+    opacity: 0.85;
+    letter-spacing: 0.3px;
+    margin-bottom: 2px;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+  }
+
+  .price {
+    font-size: 58px;
+    font-weight: 800;
+    color: #C9A54E;
+    line-height: 1;
+    text-shadow: 0 2px 20px rgba(201, 165, 78, 0.3);
+    letter-spacing: -1px;
+  }
+
+  .footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+
+  .cta {
+    font-size: 14px;
+    font-weight: 400;
+    color: #C9A54E;
+    opacity: 0.75;
+    letter-spacing: 0.5px;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+  }
+
+  .caption {
+    font-size: 14px;
+    font-weight: 300;
+    color: rgba(255, 255, 255, 0.6);
+    max-width: 400px;
+    font-style: italic;
+    text-align: right;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+  }
+
+  .bottom-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(to right, #C9A54E, rgba(201, 165, 78, 0.3));
+    z-index: 3;
+  }
+</style>
+</head>
+<body>
+  <div class="background"></div>
+  <div class="overlay"></div>
+
+  <div class="content">
+    <div class="logo">
+      {{LOGO_HTML}}
+    </div>
+
+    <div class="deal-info">
+      <div class="badge">{{EVENT_NAME}}</div>
+      <div class="route">{{ROUTE}}</div>
+      <div class="price-section">
+        <div class="price-label">Business class round-trip from</div>
+        <div class="price">{{PRICE}}</div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="cta">Book now · buybusinessclass.com</div>
+      <div class="caption">{{CAPTION}}</div>
+    </div>
+  </div>
+
+  <div class="bottom-bar"></div>
+</body>
+</html>
