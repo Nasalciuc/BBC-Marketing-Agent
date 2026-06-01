@@ -9,6 +9,7 @@ import logging
 import httpx
 
 from config import settings
+from prompts.system_prompts import format_telegram_preview
 
 log = logging.getLogger("bbc.telegram")
 
@@ -107,34 +108,7 @@ async def send_approval_request(event: dict, chat_id: str | int | None = None):
     """Trimite un deal pentru aprobare cu imagine + butoane ✅❌."""
     campaign_id = event.get("campaign_id", "unknown")
 
-    routes = event.get("routes", [{}])
-    route_str = event.get("route_str", "")
-    if not route_str and routes:
-        r = routes[0] if isinstance(routes[0], dict) else {}
-        route_str = f"{r.get('from', '?')} → {r.get('to', '?')}"
-
-    category = event.get("category", "")
-    emoji = {
-        "motorsport": "🏎️",
-        "tennis": "🎾",
-        "football": "⚽",
-        "business": "💼",
-        "fashion": "👗",
-        "film": "🎬",
-        "art": "🎨",
-        "yachting": "🛥️",
-        "music": "🎵",
-    }.get(category, "✈️")
-
-    caption = (
-        f"{emoji} *{event.get('name', event.get('event_name', 'Event'))}*\n"
-        f"📍 {event.get('city', '?')}\n"
-        f"📅 {event.get('dates_start', '?')} — {event.get('dates_end', '?')}\n"
-        f"✈️ {route_str}\n"
-        f"💰 *{event.get('price', '?')}* business round-trip\n"
-        f"⭐ Score: {event.get('premium_score', '?')}/10\n\n"
-        f"_{event.get('caption', event.get('caption_draft', ''))}_"
-    )
+    caption = format_telegram_preview(event)
 
     keyboard = {
         "inline_keyboard": [

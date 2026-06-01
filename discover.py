@@ -25,9 +25,10 @@ async def run_discovery():
 
     from services.branding_engine import generate_branded_image
     from services.gemini_client import discover_and_verify, generate_event_image
-    from services.image_enhancer import enhance_for_platform
+    from services.image_enhancer import enhance_for_platform, remove_watermark_corner
     from services.notifier import send_error_alert
-    from services.pricing_engine import calculate_price, format_price
+    from prompts.system_prompts import format_badge_text, get_urgency_text
+    from services.pricing_engine import calculate_price, format_price, format_route_display
     from services.sheets_client import save_drafts
     from services.supabase_client import (
         is_job_completed,
@@ -70,7 +71,7 @@ async def run_discovery():
             price = calculate_price(from_iata, to_iata, "round_trip", "business")
             event["price"] = format_price(price) if price else "Contact us"
             event["price_raw"] = price
-            event["route_str"] = f"{from_iata} → {to_iata}"
+            event["route_str"] = format_route_display(from_iata, to_iata)
             log.info("  %s: %s = %s", event.get("name"), event["route_str"], event["price"])
 
             log.info("  Generating background image...")
@@ -78,6 +79,8 @@ async def run_discovery():
                 "image_prompt", f"Beautiful view of {event.get('city', 'destination')}"
             )
             bg_image = await generate_event_image(image_prompt)
+            if bg_image:
+                bg_image = remove_watermark_corner(bg_image)
 
             log.info("  Applying BBC branding...")
             bg_source = "assets/defaults/default_background.jpg"
@@ -87,12 +90,24 @@ async def run_discovery():
                 tmp.close()
                 bg_source = tmp.name
 
+            badge = format_badge_text(event.get("name", "Premium Event"))
+            hook = event.get("sales_hook") or event.get("caption_draft", "")
+            urgency = event.get("urgency_text") or get_urgency_text(
+                event.get("name", ""), event.get("category", "")
+            )
+
             try:
-                branded = generate_branded_image(
-                    event_name=event.get("name", "Premium Event"),
-                    route=event["route_str"],
-                    price=event["price"],
-                    background_url_or_path=bg_source,
+                branded = await asyncio.to_thread(
+                    generate_branded_image,
+                    event.get("name", "Premium Event"),
+                    event["route_str"],
+                    event["price"],
+                    bg_source,
+                    "deal_landscape",
+                    badge,
+                    "",
+                    hook,
+                    urgency,
                 )
             finally:
                 if (

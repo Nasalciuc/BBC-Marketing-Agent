@@ -12,11 +12,21 @@ try:
 except ImportError:
     HAS_PLAYWRIGHT = False
 
-from services.branding_engine import generate_branded_image
+from services.branding_engine import _normalize_price, generate_branded_image
 
 TEST_BG = "assets/defaults/default_background.jpg"
 HAS_BG = Path(TEST_BG).exists()
 SKIP_REASON = "Playwright not installed or no test background"
+
+
+class TestNormalizePrice:
+    def test_shell_comma_artifact(self):
+        assert _normalize_price(",069") == "$2,069"
+        assert _normalize_price("\\,069") == "$2,069"
+
+    def test_standard_formats(self):
+        assert _normalize_price("$2,069") == "$2,069"
+        assert _normalize_price("2,033") == "$2,033"
 
 
 @pytest.mark.skipif(not HAS_PLAYWRIGHT or not HAS_BG, reason=SKIP_REASON)

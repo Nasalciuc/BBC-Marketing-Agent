@@ -33,6 +33,7 @@ async def run_broadcast():
         update_campaign_status,
     )
     from services.telegram_client import send_alert, send_broadcast_report
+    from prompts.system_prompts import format_whatsapp_group
     from services.twilio_client import broadcast_deal
     from services.waha_client import post_deal_to_group
 
@@ -68,14 +69,7 @@ async def run_broadcast():
                 total_results["sent"] += results["sent"]
                 total_results["failed"] += results["failed"]
 
-            caption = (
-                f"✈️ *{deal.get('event_name', 'Business Class Deal')}*\n"
-                f"📍 {deal.get('city', '')}\n"
-                f"📅 {deal.get('dates', '')}\n\n"
-                f"✈️ {deal.get('route', '')} _Business Class_\n"
-                f"💰 *From {deal.get('price', '')}* round-trip\n\n"
-                f"📞 Book now: buybusinessclass.com"
-            )
+            caption = format_whatsapp_group(deal)
             group_result = await post_deal_to_group(
                 image_url=deal.get("image_url", ""),
                 caption=caption,

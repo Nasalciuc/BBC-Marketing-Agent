@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     # BBC Branding
     bbc_navy: str = "#0B1829"
     bbc_gold: str = "#C9A54E"
+    branding_renderer: str = "auto"  # auto | playwright | hcti
+    hcti_user_id: str = ""
+    hcti_api_key: str = ""
 
     # Environment
     debug: bool = False

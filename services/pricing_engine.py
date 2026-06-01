@@ -112,3 +112,11 @@ def get_all_cabin_prices(
 def format_price(price: int, currency: str = "$") -> str:
     """Formatează prețul cu separator de mii."""
     return f"{currency}{price:,}"
+
+
+def format_route_display(from_iata: str, to_iata: str) -> str:
+    """Afișează ruta cu oraș destinație: JFK → Nice."""
+    airports = _load_airports()
+    to_airport = airports.get(to_iata.upper())
+    to_name = to_airport.get("city", to_iata.upper()) if to_airport else to_iata.upper()
+    return f"{from_iata.upper()} → {to_name}"

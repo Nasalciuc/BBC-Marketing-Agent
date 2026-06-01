@@ -98,6 +98,22 @@ def prepare_image(img: Image.Image, target_size: tuple[int, int]) -> Image.Image
     return enhance_quality(img)
 
 
+def remove_watermark_corner(image_bytes: bytes, corner_size: int = 80) -> bytes:
+    """Acoperă watermark-ul Gemini din colțul dreapta-jos cu blur."""
+    img = Image.open(BytesIO(image_bytes))
+    img = ensure_rgb(img)
+    w, h = img.size
+
+    box = (w - corner_size, h - corner_size, w, h)
+    corner = img.crop(box)
+    blurred = corner.filter(ImageFilter.GaussianBlur(radius=20))
+    img.paste(blurred, box)
+
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=95)
+    return buf.getvalue()
+
+
 def enhance_for_platform(image_bytes: bytes, platform: str = "whatsapp") -> bytes:
     """
     Pipeline complet: resize + enhance + export JPEG.

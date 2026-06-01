@@ -7,7 +7,7 @@ Uses Google Gemini API (google-genai SDK) for:
 
 Models:
 - Text/discovery: gemini-2.5-flash
-- Image gen: gemini-2.5-flash-image (fallback chain)
+- Image gen: gemini-2.5-flash-image, gemini-3.1-flash-image (+ Imagen 4 fallback)
 """
 from __future__ import annotations
 
@@ -21,76 +21,20 @@ from google import genai
 from google.genai import types
 
 from config import settings
+from prompts.system_prompts import (
+    DISCOVERY_PROMPT,
+    IMAGE_GEN_SYSTEM,
+    VERIFICATION_PROMPT,
+    normalize_discovered_event,
+)
 
 log = logging.getLogger("bbc.gemini")
 
-DISCOVERY_PROMPT = """
-Tu ești un research agent pentru BuyBusinessClass.com — companie premium
-de booking zboruri business class.
-
-Caută pe web cele mai importante 5 evenimente premium mondiale
-care au loc în săptămâna {week_start} — {week_end}.
-
-CATEGORII (prioritate descrescătoare):
-1. Motorsport: Formula 1, MotoGP, WEC, Le Mans
-2. Tenis: Grand Slam-uri, ATP/WTA Masters 1000
-3. Fotbal: Champions League, Euro, World Cup, finale mari
-4. Business/Tech: Davos, Web Summit, CES, MWC, Dreamforce, WWDC
-5. Fashion: Paris/Milan/NY/London Fashion Week
-6. Film: Cannes, Venice, TIFF, Berlin Film Festival
-7. Artă/Design: Art Basel, Salone del Mobile, Biennale Venezia
-8. Yachting/Luxury: Monaco Yacht Show, Rolex Regattas
-9. Curse: Royal Ascot, Melbourne Cup, Kentucky Derby
-10. Music: Glastonbury, Salzburg Festival, Bayreuth
-
-PENTRU FIECARE EVENIMENT returnează:
-- name: numele complet oficial
-- city: orașul + țara
-- country_code: ISO 2 litere
-- dates_start: YYYY-MM-DD
-- dates_end: YYYY-MM-DD
-- category: din lista de mai sus
-- premium_score: 1.0-10.0 (probabilitatea ca un client business class să zboare pentru acest eveniment)
-- routes: top 2 rute din hub-urile BBC (JFK, LAX, MIA, ORD, SFO, BOS, YYZ) către cel mai apropiat aeroport
-  Format: [{{"from": "JFK", "to": "NCE", "from_continent": "NA", "to_continent": "EU"}}]
-- image_prompt: un prompt de 1-2 propoziții pentru a genera o imagine FĂRĂ TEXT
-  care evocă destinația/evenimentul (ex: "Aerial view of Monaco harbor with luxury
-  yachts at sunset, Mediterranean blue water, cinematic photography")
-- caption: caption WhatsApp scurt (max 200 caractere), cu emoji, creează urgență/FOMO
-
-REGULI STRICTE:
-- NU inventa evenimente. Caută pe web și confirmă.
-- Doar rute care IMPLICĂ North America (hub-uri BBC)
-- premium_score: 9-10 = F1, Grand Slam, CL finală; 7-8 = Fashion Week, Art Basel; 5-6 = regionale
-- NU include prețuri (se calculează automat din algoritmul BBC)
-- SORTEAZĂ descrescător după premium_score
-- image_prompt: NU include text, cuvinte, logo-uri în descriere — doar scenă vizuală
-- caption: include emoji relevant, menționează "business class", include "buybusinessclass.com"
-
-Răspunde STRICT în JSON valid, fără markdown, fără explicații:
-{{"events": [...]}}
-"""
-
-VERIFICATION_PROMPT = """
-Verifică rapid: evenimentul "{event_name}" are loc în {city} pe datele {dates_start} — {dates_end}?
-Caută pe web pentru confirmare.
-Răspunde cu un singur cuvânt: DA sau NU.
-"""
-
-IMAGE_GEN_SYSTEM = """
-You are a professional travel and luxury photography AI.
-Generate stunning, photorealistic images for a premium business class airline company.
-Style: cinematic, warm golden light, high-end travel photography.
-NEVER include any text, words, letters, logos, or watermarks in the image.
-NEVER include airplane interiors — focus on the DESTINATION.
-Format: landscape orientation (wider than tall), 16:9 aspect ratio preferred.
-"""
-
 IMAGE_MODELS = [
-    "gemini-2.5-flash-preview-image-generation",
-    "gemini-2.0-flash-preview-image-generation",
-    "gemini-2.0-flash-exp",
+    "gemini-2.5-flash-image",
+    "gemini-3.1-flash-image",
 ]
+IMAGEN_MODEL = "imagen-4.0-generate-001"
 
 
 def _get_client() -> genai.Client:
@@ -177,6 +121,7 @@ def _discover_events_sync(week_offset: int) -> list[dict]:
     )
 
     events = _parse_events_json(_response_text(response))
+    events = [normalize_discovered_event(e) for e in events]
     events.sort(key=lambda e: e.get("premium_score", 0), reverse=True)
     events = events[:5]
 
@@ -210,7 +155,7 @@ def _verify_event_sync(event: dict) -> bool:
     )
 
     answer = _response_text(response).upper()
-    verified = "DA" in answer or "YES" in answer
+    verified = "YES" in answer or "DA" in answer
     log.info("Verify '%s': %s (%s)", event.get("name"), "OK" if verified else "FAIL", answer[:20])
     return verified
 
@@ -240,21 +185,20 @@ def _generate_event_image_sync(image_prompt: str) -> bytes | None:
             log.warning("Image gen failed with %s: %s", model_name, exc)
 
     try:
-        log.info("Trying Imagen 3.0...")
+        log.info("Trying Imagen 4...")
         response = client.models.generate_images(
-            model="imagen-3.0-generate-002",
+            model=IMAGEN_MODEL,
             prompt=image_prompt,
             config=types.GenerateImagesConfig(
                 number_of_images=1,
-                output_mime_type="image/jpeg",
             ),
         )
         if response.generated_images:
             image_bytes = response.generated_images[0].image.image_bytes
-            log.info("Image generated via Imagen 3: %s bytes", f"{len(image_bytes):,}")
+            log.info("Image generated via Imagen 4: %s bytes", f"{len(image_bytes):,}")
             return image_bytes
     except Exception as exc:
-        log.warning("Imagen 3 failed: %s", exc)
+        log.warning("Imagen 4 failed: %s", exc)
 
     log.error("All image generation models failed")
     return None

@@ -13,7 +13,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 from config import settings
 from services.branding_engine import generate_branded_image
 from services.gemini_client import discover_and_verify, generate_event_image
-from services.pricing_engine import format_price, get_all_cabin_prices
+from services.image_enhancer import remove_watermark_corner
+from services.pricing_engine import format_price, format_route_display, get_all_cabin_prices
 
 
 async def main() -> None:
@@ -64,6 +65,7 @@ async def main() -> None:
         bg_image = await generate_event_image(image_prompt)
 
         if bg_image:
+            bg_image = remove_watermark_corner(bg_image)
             bg_path = output_dir / f"bg_{i}.jpg"
             bg_path.write_bytes(bg_image)
             print(f"  Background: {bg_path} ({len(bg_image):,} bytes)")
@@ -73,9 +75,14 @@ async def main() -> None:
             background_source = str(ROOT / "assets" / "defaults" / "default_background.jpg")
 
         print("Applying BBC branding...")
-        route_str = f"{from_iata} → {to_iata}"
-        badge = event.get("category", "")
-        badge_text = badge.replace("_", " ").title() if badge else None
+        route_str = format_route_display(from_iata, to_iata)
+        from prompts.system_prompts import format_badge_text, get_sales_hook, get_urgency_text
+
+        badge_text = format_badge_text(event.get("name", "Premium Event"))
+        dest = route_str.split("→")[-1].strip()
+        headline = f"Fly business to {dest}"
+        route_info = f"{from_iata} → {to_iata} · Business class"
+        urgency = get_urgency_text(event.get("name", ""), event.get("category", ""))
 
         try:
             branded = generate_branded_image(
@@ -84,6 +91,10 @@ async def main() -> None:
                 price=price_str,
                 background_url_or_path=background_source,
                 badge_text=badge_text,
+                headline=headline,
+                route_info=route_info,
+                urgency=urgency,
+                cta="Check seats now",
             )
             final_path = output_dir / f"deal_{i}_{from_iata}_{to_iata}.jpg"
             final_path.write_bytes(branded)

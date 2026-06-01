@@ -1,5 +1,5 @@
 """Teste pentru pricing engine — verifică formula BBC."""
-from services.pricing_engine import calculate_price, get_all_cabin_prices, format_price
+from services.pricing_engine import calculate_price, format_price, format_route_display, get_all_cabin_prices
 
 
 class TestPricingEngine:
@@ -87,6 +87,11 @@ class TestPricingEngine:
         assert format_price(2069) == "$2,069"
         assert format_price(2069, "£") == "£2,069"
         assert format_price(116, "€") == "€116"
+
+    def test_format_route_display(self):
+        assert format_route_display("JFK", "NCE") == "JFK → Nice"
+        assert format_route_display("JFK", "LHR") == "JFK → London"
+        assert format_route_display("LAX", "XXX") == "LAX → XXX"
 
     def test_case_insensitive(self):
         """Codurile IATA funcționează case-insensitive."""
