@@ -233,9 +233,13 @@ async def verify_event(event: dict) -> bool:
 async def generate_event_image(image_prompt: str) -> bytes | None:
     """Generate a background image for branding."""
     if not settings.gemini_api_key:
-        log.error("GEMINI_API_KEY not set")
+        log.warning("GEMINI_API_KEY not set — skipping image generation")
         return None
-    return await asyncio.to_thread(_generate_event_image_sync, image_prompt)
+    try:
+        return await asyncio.to_thread(_generate_event_image_sync, image_prompt)
+    except Exception as exc:
+        log.warning("Image generation failed (quota or API error): %s", exc)
+        return None
 
 
 async def discover_and_verify(week_offset: int = 1, max_events: int = 3) -> list[dict]:

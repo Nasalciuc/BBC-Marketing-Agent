@@ -81,34 +81,44 @@ async def handle_urgent_request(chat_id: int, text: str):
             if bg_bytes and bg_path != "assets/defaults/default_background.jpg":
                 os.unlink(bg_path)
 
-        image_url = None
-        try:
-            from services.supabase_client import save_campaign, upload_image
-
-            image_url = await upload_image(branded, f"deals/{campaign_id}/landscape.jpg")
-            await save_campaign(
-                {
-                    "campaign_id": campaign_id,
-                    "name": event_name,
-                    "event_name": event_name,
-                    "city": deal.get("city", ""),
-                    "category": deal.get("category", "travel"),
-                    "route_str": f"{from_iata} → {to_iata}",
-                    "route": f"{from_iata} → {to_iata}",
-                    "price": price_str,
-                    "price_raw": price_raw,
-                    "image_url": image_url,
-                    "status": "urgent_preview",
-                }
-            )
-        except Exception as e:
-            log.warning("Supabase: %s", e)
+        deal["campaign_id"] = campaign_id
+        deal["name"] = event_name
+        deal["event_name"] = event_name
+        deal["price"] = price_str
+        deal["price_raw"] = price_raw
+        deal["routes"] = [{"from": from_iata, "to": to_iata}]
+        deal["event_context"] = deal.get("event_context", "")
 
         caption = (
             f"⚡ *URGENT — {event_name}*\n"
             f"✈️ {from_iata} → {to_iata}\n"
             f"💰 *{price_str}* business RT"
         )
+        try:
+            from prompts.system_prompts import generate_caption_from_image
+
+            generated = await generate_caption_from_image(branded, deal)
+            deal["whatsapp_caption"] = generated
+            caption = generated
+        except Exception as e:
+            log.warning("Caption gen failed: %s", e)
+
+        image_url = None
+        try:
+            from services.supabase_client import save_campaign, upload_image
+
+            image_url = await upload_image(branded, f"deals/{campaign_id}/landscape.jpg")
+            deal["image_url"] = image_url
+            await save_campaign(
+                {
+                    **deal,
+                    "route_str": f"{from_iata} → {to_iata}",
+                    "route": f"{from_iata} → {to_iata}",
+                    "status": "urgent_preview",
+                }
+            )
+        except Exception as e:
+            log.warning("Supabase: %s", e)
         if image_url:
             await send_photo(
                 chat_id=chat_id,

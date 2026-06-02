@@ -151,13 +151,41 @@ async def save_campaign(event: dict) -> bool:
                 "price_raw": event.get("price_raw"),
                 "image_url": event.get("image_url"),
                 "story_url": event.get("story_url"),
-                "caption": event.get("caption", event.get("caption_draft", "")),
+                "caption": event.get(
+                    "caption",
+                    event.get("whatsapp_caption", event.get("caption_draft", "")),
+                ),
+                "whatsapp_caption": event.get("whatsapp_caption", ""),
+                "event_context": event.get("event_context", ""),
+                "caption_override": event.get("caption_override"),
                 "status": event.get("status", "draft"),
             }
         ).execute()
         return True
     except Exception as e:
         log.error("Failed to save campaign: %s", e)
+        return False
+
+
+async def update_review_tracking(
+    campaign_id: str,
+    chat_id: int,
+    message_id: int,
+) -> bool:
+    """Salvează review message IDs pentru edit keyboard după approve/reject."""
+    client = _get_client()
+    if not client or not campaign_id:
+        return False
+    try:
+        client.table("campaigns").update(
+            {
+                "review_chat_id": chat_id,
+                "review_message_id": message_id,
+            }
+        ).eq("campaign_id", campaign_id).execute()
+        return True
+    except Exception as e:
+        log.warning("Review IDs update failed (migration pending?): %s", e)
         return False
 
 

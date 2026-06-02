@@ -324,16 +324,15 @@ _{sales_hook}_
 # 5. WHATSAPP BROADCAST — Mesaj către clienți (Twilio template)
 # ═══════════════════════════════════════════════════════════
 
-WHATSAPP_CAPTION_FALLBACK = """
-{emoji} {event_name}
+WHATSAPP_CAPTION_FALLBACK = """{emoji} {event_name}
 
-{from_iata} → {to_iata} Business Class
+{from_iata} → {to_city} Business Class
 From {price} round-trip
 
 {sales_hook}
 
-Book: buybusinessclass.com
-"""
+buybusinessclass.com
+☎️ +1 888-322-7999 📩 deals@buybusinessclass.com"""
 
 # ═══════════════════════════════════════════════════════════
 # 6. WHATSAPP GROUP POST — Mesaj în grup BBC VIP (WAHA)
@@ -732,8 +731,8 @@ def format_whatsapp_group(event: dict) -> str:
     context_short = event_context.split(".")[0] + "." if event_context else ""
 
     urgency = event.get("urgency", get_urgency_text(
+        event.get("name", event.get("event_name", "")),
         event.get("category", "default"),
-        event.get("name", event.get("event_name", ""))
     ))
 
     return WHATSAPP_GROUP_TEMPLATE.format(
@@ -756,11 +755,12 @@ def format_whatsapp_caption(event: dict) -> str:
 
     routes = event.get("routes", [{}])
     r = routes[0] if routes else {}
+    to_iata = r.get("to", event.get("to_iata", "LHR"))
     return WHATSAPP_CAPTION_FALLBACK.format(
         emoji=get_emoji(event.get("category", "default")),
         event_name=event.get("name", event.get("event_name", "")),
         from_iata=r.get("from", event.get("from_iata", "JFK")),
-        to_iata=r.get("to", event.get("to_iata", "LHR")),
+        to_city=get_city_name(to_iata),
         price=event.get("price", ""),
         sales_hook=event.get("sales_hook", get_sales_hook(event.get("category", ""))),
     ).strip()

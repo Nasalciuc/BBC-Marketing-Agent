@@ -81,6 +81,8 @@ async def run_discovery():
             bg_image = await generate_event_image(image_prompt)
             if bg_image:
                 bg_image = remove_watermark_corner(bg_image)
+            else:
+                log.warning("Image gen failed — using default_background.jpg")
 
             log.info("  Applying BBC branding...")
             bg_source = "assets/defaults/default_background.jpg"
@@ -119,6 +121,16 @@ async def run_discovery():
 
             enhanced = enhance_for_platform(branded, "whatsapp")
 
+            try:
+                from prompts.system_prompts import generate_caption_from_image
+
+                caption = await generate_caption_from_image(enhanced, event)
+                event["whatsapp_caption"] = caption
+                event["caption"] = caption
+                log.info("  Caption generated: %d chars", len(caption))
+            except Exception as e:
+                log.warning("Caption generation failed: %s", e)
+
             image_url = await upload_image(enhanced, f"deals/{campaign_id}/landscape.jpg")
             event["image_url"] = image_url
             log.info("  Uploaded: %s", image_url)
@@ -129,25 +141,17 @@ async def run_discovery():
         save_drafts(events)
 
         log.info("Sending Telegram approval requests...")
-        from config import settings
-
         review_results = await send_deals_for_approval(events)
 
-        if settings.supabase_url and settings.supabase_key:
-            try:
-                from supabase import create_client
+        from services.supabase_client import update_review_tracking
 
-                sb = create_client(settings.supabase_url, settings.supabase_key)
-                for event, result in zip(events, review_results or []):
-                    if result and result.get("message_id"):
-                        sb.table("campaigns").update(
-                            {
-                                "review_chat_id": result["chat_id"],
-                                "review_message_id": result["message_id"],
-                            }
-                        ).eq("campaign_id", event.get("campaign_id", "")).execute()
-            except Exception as e:
-                log.warning("Save review IDs: %s", e)
+        for event, result in zip(events, review_results or []):
+            if result and result.get("message_id"):
+                await update_review_tracking(
+                    event.get("campaign_id", ""),
+                    result["chat_id"],
+                    result["message_id"],
+                )
 
         await record_job_complete(job_id, events_count=len(events))
         log.info("Discovery complete! %d deals ready for approval.", len(events))
