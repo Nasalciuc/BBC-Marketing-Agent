@@ -19,7 +19,7 @@ class TestDiscoveryParsing:
         from prompts.system_prompts import DISCOVERY_PROMPT
 
         assert "Formula 1" in DISCOVERY_PROMPT
-        assert "Grand Slam" in DISCOVERY_PROMPT
+        assert "Wimbledon" in DISCOVERY_PROMPT
         assert "Fashion Week" in DISCOVERY_PROMPT
 
     def test_discovery_prompt_requires_na_routes(self):
