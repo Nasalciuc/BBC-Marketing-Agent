@@ -7,8 +7,10 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
 
-    # Anthropic (fallback LLM)
+    # Anthropic (Claude — text, captions, AI agent)
     anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-20250514"
+    text_llm_provider: str = "claude"  # claude | gemini
 
     # Unsplash (stock photos)
     unsplash_access_key: str = ""

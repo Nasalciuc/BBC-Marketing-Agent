@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import random
 from pathlib import Path
+
+log = logging.getLogger("bbc.prompts")
 
 # ═══════════════════════════════════════════════════════════
 # 0. CONTACT BLOCK — obligatoriu la final pe ORICE mesaj customer-facing
@@ -789,8 +792,19 @@ async def generate_caption_from_image(
     image_bytes: bytes,
     event_data: dict,
 ) -> str:
-    """Generează caption WhatsApp din imagine branded + date eveniment."""
+    """
+    Generate caption from branded image.
+    Claude vision (primary) or Gemini (fallback) or static template.
+    """
     from config import settings
+
+    if settings.anthropic_api_key and settings.text_llm_provider == "claude":
+        try:
+            from services.anthropic_client import generate_caption
+
+            return await generate_caption(image_bytes, event_data)
+        except Exception as e:
+            log.warning("Claude caption failed, trying Gemini: %s", e)
 
     routes = event_data.get("routes", [{}])
     r = routes[0] if routes else {}
@@ -804,60 +818,58 @@ async def generate_caption_from_image(
 
     fallback = _fallback_caption(event_data)
 
-    if not settings.gemini_api_key:
-        return fallback
-
-    prompt = CAPTION_FROM_IMAGE_PROMPT.format(
-        event_name=event_data.get("name", event_data.get("event_name", "")),
-        city=event_data.get("city", ""),
-        dates=dates,
-        from_iata=from_iata,
-        to_city=to_city,
-        price=event_data.get("price", ""),
-        category=event_data.get("category", "default"),
-        event_context=event_data.get("event_context", ""),
-        sales_hook=event_data.get("sales_hook", get_sales_hook(event_data.get("category", "default"))),
-    )
-
-    def _generate_sync() -> str:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=settings.gemini_api_key)
-        response = client.models.generate_content(
-            model=settings.gemini_model,
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                prompt,
-            ],
+    if settings.gemini_api_key:
+        prompt = CAPTION_FROM_IMAGE_PROMPT.format(
+            event_name=event_data.get("name", event_data.get("event_name", "")),
+            city=event_data.get("city", ""),
+            dates=dates,
+            from_iata=from_iata,
+            to_city=to_city,
+            price=event_data.get("price", ""),
+            category=event_data.get("category", "default"),
+            event_context=event_data.get("event_context", ""),
+            sales_hook=event_data.get(
+                "sales_hook", get_sales_hook(event_data.get("category", "default"))
+            ),
         )
-        return (response.text or "").strip()
 
-    try:
-        caption = await asyncio.to_thread(_generate_sync)
+        def _generate_sync() -> str:
+            from google import genai
+            from google.genai import types
 
-        if len(caption) > 350:
-            caption = caption[:347].rstrip() + "..."
+            client = genai.Client(api_key=settings.gemini_api_key)
+            response = client.models.generate_content(
+                model=settings.gemini_model,
+                contents=[
+                    types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                    prompt,
+                ],
+            )
+            return (response.text or "").strip()
 
-        # Asigură contact block complet la final
-        if "+1 888-322-7999" not in caption:
-            # Adaugă contact block dacă Gemini l-a omis
-            caption = caption.rstrip()
-            if "buybusinessclass.com" in caption.lower():
-                # Are URL dar lipsește telefon/email — înlocuiește ultima linie
-                lines = caption.split("\n")
-                # Găsește linia cu buybusinessclass și înlocuiește tot de acolo
-                for i, line in enumerate(lines):
-                    if "buybusinessclass" in line.lower():
-                        lines = lines[:i]
-                        break
-                caption = "\n".join(lines).rstrip() + "\n\n" + CONTACT_BLOCK
-            else:
-                caption += "\n\n" + CONTACT_BLOCK
+        try:
+            caption = await asyncio.to_thread(_generate_sync)
 
-        return caption
-    except Exception:
-        return fallback
+            if len(caption) > 350:
+                caption = caption[:347].rstrip() + "..."
+
+            if "+1 888-322-7999" not in caption:
+                caption = caption.rstrip()
+                if "buybusinessclass.com" in caption.lower():
+                    lines = caption.split("\n")
+                    for i, line in enumerate(lines):
+                        if "buybusinessclass" in line.lower():
+                            lines = lines[:i]
+                            break
+                    caption = "\n".join(lines).rstrip() + "\n\n" + CONTACT_BLOCK
+                else:
+                    caption += "\n\n" + CONTACT_BLOCK
+
+            return caption
+        except Exception as e:
+            log.warning("Gemini caption also failed: %s", e)
+
+    return fallback
 
 
 async def rewrite_caption(event_data: dict, original_caption: str) -> str:

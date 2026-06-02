@@ -1,6 +1,5 @@
-"""Urgent posting: admin text → Gemini parse → price → brand → preview → post."""
+"""Urgent posting: admin text → Claude parse → price → brand → preview → post."""
 import asyncio
-import json
 import logging
 import os
 import tempfile
@@ -18,27 +17,20 @@ async def handle_urgent_request(chat_id: int, text: str):
     try:
         from config import settings
 
-        if not settings.gemini_api_key:
-            await send_message(chat_id=chat_id, text="❌ GEMINI_API_KEY not configured.")
+        if not settings.anthropic_api_key and not settings.gemini_api_key:
+            await send_message(
+                chat_id=chat_id, text="❌ No AI configured (Claude or Gemini)."
+            )
             return
 
-        from google import genai
-        from google.genai import types
+        from services.anthropic_client import parse_urgent_request
 
-        client = genai.Client(api_key=settings.gemini_api_key)
-        resp = client.models.generate_content(
-            model=settings.gemini_model,
-            contents=(
-                f'Parse travel request to JSON only:\n"{text}"\n\n'
-                'Return ONLY: {"event_name":"...","from_iata":"JFK","to_iata":"LHR",'
-                '"city":"London, UK","category":"travel","image_prompt":"cinematic photo description"}'
-            ),
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.2,
-            ),
-        )
-        deal = json.loads(resp.text)
+        try:
+            deal = await parse_urgent_request(text)
+        except Exception as e:
+            log.error("Parse failed: %s", e)
+            await send_message(chat_id=chat_id, text=f"❌ Could not parse: `{e}`")
+            return
         from_iata = deal.get("from_iata", "JFK")
         to_iata = deal.get("to_iata", "LHR")
         event_name = deal.get("event_name", text[:40])
@@ -119,6 +111,18 @@ async def handle_urgent_request(chat_id: int, text: str):
             )
         except Exception as e:
             log.warning("Supabase: %s", e)
+
+        try:
+            from services.context_manager import update_context
+
+            await update_context(
+                chat_id,
+                state="preview",
+                current_campaign_id=campaign_id,
+            )
+        except Exception as e:
+            log.warning("Context update: %s", e)
+
         if image_url:
             await send_photo(
                 chat_id=chat_id,

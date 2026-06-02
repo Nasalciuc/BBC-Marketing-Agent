@@ -27,6 +27,7 @@ async def health():
         from config import settings
 
         status["gemini"] = bool(settings.gemini_api_key)
+        status["anthropic"] = bool(settings.anthropic_api_key)
         status["supabase"] = bool(settings.supabase_url and settings.supabase_key)
         status["telegram"] = bool(settings.telegram_bot_token)
         status["sheets"] = bool(settings.google_sheets_id)
@@ -167,6 +168,32 @@ async def telegram_webhook(request: Request):
             except Exception:
                 pass
             await answer_callback_query(callback_id, "❌ Cancelled")
+        elif action == "cmd":
+            cmd = campaign_id
+            from services.telegram_client import answer_callback_query
+
+            await answer_callback_query(callback_id)
+
+            if cmd == "start":
+                from handlers.common import handle_start
+
+                await handle_start(chat_id)
+            elif cmd == "status":
+                from handlers.common import handle_status
+
+                await handle_status(chat_id)
+            elif cmd == "deals":
+                from handlers.common import handle_deals
+
+                await handle_deals(chat_id)
+            elif cmd == "urgent":
+                from handlers.common import handle_urgent_prompt
+
+                await handle_urgent_prompt(chat_id)
+            elif cmd == "help":
+                from handlers.common import handle_help
+
+                await handle_help(chat_id)
         else:
             log.warning("Unknown callback: %s", callback_data)
 
@@ -184,14 +211,22 @@ async def telegram_webhook(request: Request):
             await send_message(chat_id=chat_id, text="⛔ Access denied.")
             return {"ok": True}
 
-        if text.startswith("/start") or text.startswith("/help"):
+        if text.startswith("/start"):
             from handlers.common import handle_start
 
             await handle_start(chat_id)
+        elif text.startswith("/help"):
+            from handlers.common import handle_help
+
+            await handle_help(chat_id)
         elif text.startswith("/status"):
             from handlers.common import handle_status
 
             await handle_status(chat_id)
+        elif text.startswith("/deals"):
+            from handlers.common import handle_deals
+
+            await handle_deals(chat_id)
         elif text.startswith("/cancel"):
             from services.telegram_client import send_message
 
@@ -234,8 +269,8 @@ async def telegram_webhook(request: Request):
 
                 await handle_caption_reply(editing_id, text, chat_id)
             else:
-                from handlers.urgent import handle_urgent_request
+                from handlers.conversation import handle_ai_message
 
-                await handle_urgent_request(chat_id, text)
+                await handle_ai_message(chat_id, user_id, text)
 
     return {"ok": True}

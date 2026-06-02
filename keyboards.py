@@ -69,3 +69,46 @@ def parse_callback(data: str) -> tuple[str, str]:
     if not data or "_" not in data:
         return (data or ""), ""
     return data.split("_", 1)
+
+
+def main_menu_keyboard() -> dict:
+    """Main menu — 4 acțiuni rapide."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "📊 Status", "callback_data": "cmd_status"},
+                {"text": "📋 Deals", "callback_data": "cmd_deals"},
+            ],
+            [
+                {"text": "⚡ New Deal", "callback_data": "cmd_urgent"},
+            ],
+            [
+                {"text": "📖 Help", "callback_data": "cmd_help"},
+            ],
+        ]
+    }
+
+
+def nav_keyboard(back_to: str = "cmd_start") -> dict:
+    """Navigation: Refresh + Back."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🔄 Refresh", "callback_data": back_to},
+                {"text": "← Menu", "callback_data": "cmd_start"},
+            ],
+        ]
+    }
+
+
+def after_action_keyboard() -> dict:
+    """After approve/post/schedule — next actions."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "📊 Status", "callback_data": "cmd_status"},
+                {"text": "⚡ New Deal", "callback_data": "cmd_urgent"},
+                {"text": "← Menu", "callback_data": "cmd_start"},
+            ],
+        ]
+    }
