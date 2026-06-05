@@ -156,6 +156,16 @@
       0 2px 4px rgba(0, 0, 0, 0.5),
       0 4px 20px rgba(0, 0, 0, 0.3);
     letter-spacing: -1px;
+    margin-bottom: 4px;
+  }
+
+  .trip-label {
+    font-size: 18px;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.72);
+    letter-spacing: 0.4px;
+    text-transform: lowercase;
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
     margin-bottom: 10px;
   }
 
@@ -235,6 +245,7 @@
       <div class="headline">{{HEADLINE}}</div>
       <div class="price-label">{{SUBTITLE}}</div>
       <div class="price">{{PRICE}}</div>
+      {{TRIP_LABEL_HTML}}
       <div class="urgency">{{URGENCY}}</div>
       <div class="hook">{{HOOK}}</div>
       <div class="cta">{{CTA}}</div>

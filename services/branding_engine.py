@@ -205,23 +205,46 @@ def _get_subtitle(event_name: str) -> str:
     return f"Business Class to {event_name}"
 
 
-def _format_price_display(price: str) -> str:
-    """Preț pe o singură linie: '$1,511 one-way' sau '$2,033 round-trip'."""
-    text = _normalize_price(price)
-    text = re.sub(r"^from\s+", "", text, flags=re.I).strip()
-    trip_label = "one-way" if _detect_trip_type(price) == "One-Way" else "round-trip"
+def _strip_trip_type_words(text: str) -> str:
     for pattern in (
         r"\bone-way\b",
         r"\bone way\b",
         r"\boneway\b",
         r"\bround-trip\b",
         r"\bround trip\b",
-        r"\bOne-Way\b",
-        r"\bRound-Trip\b",
+        r"\broundtrip\b",
     ):
         text = re.sub(pattern, "", text, flags=re.I).strip()
-    text = text.strip(" -")
-    return f"{text} {trip_label}".strip()
+    return text.strip(" -")
+
+
+def _extract_trip_label(price: str) -> str:
+    """Returnează 'one-way', 'round-trip', sau '' dacă lipsește din price string."""
+    price_lower = price.lower()
+    if any(x in price_lower for x in ("one-way", "one way", "oneway")):
+        return "one-way"
+    if any(x in price_lower for x in ("round-trip", "round trip", "roundtrip")):
+        return "round-trip"
+    return ""
+
+
+def _format_price_amount(price: str) -> str:
+    """Linie mare: 'from $1,511'."""
+    text = _normalize_price(price)
+    text = re.sub(r"^from\s+", "", text, flags=re.I).strip()
+    text = _strip_trip_type_words(text)
+    if not text:
+        return ""
+    return f"from {text}"
+
+
+def _format_price_display(price: str) -> str:
+    """Backward compat — amount + trip pe o linie."""
+    amount = _format_price_amount(price)
+    label = _extract_trip_label(price)
+    if label:
+        return f"{amount.replace('from ', '', 1) if amount.startswith('from ') else amount} {label}".strip()
+    return amount.replace("from ", "", 1) if amount.startswith("from ") else amount
 
 
 def _resolve_headline(headline: str | None, route: str, event_name: str) -> str:
@@ -302,7 +325,11 @@ def _build_rendered_html(
     price_raw = _normalize_price(price)
     display_headline = _resolve_headline(headline, route, event_name)
     display_subtitle = _get_subtitle(event_name)
-    display_price = _format_price_display(price_raw)
+    display_price = _format_price_amount(price_raw)
+    trip_label = _extract_trip_label(price)
+    trip_label_html = (
+        f'<div class="trip-label">{html.escape(trip_label)}</div>' if trip_label else ""
+    )
     hook = hook_text or caption
 
     urgency_val = urgency or urgency_text or get_urgency_text(event_name)
@@ -323,6 +350,7 @@ def _build_rendered_html(
     html_template = html_template.replace("{{HEADLINE}}", html.escape(display_headline))
     html_template = html_template.replace("{{SUBTITLE}}", html.escape(display_subtitle))
     html_template = html_template.replace("{{PRICE}}", html.escape(display_price))
+    html_template = html_template.replace("{{TRIP_LABEL_HTML}}", trip_label_html)
     html_template = html_template.replace("{{URGENCY}}", html.escape(urgency_val))
     html_template = html_template.replace("{{HOOK}}", html.escape(hook))
     html_template = html_template.replace("{{CTA}}", html.escape(cta_val))

@@ -14,6 +14,8 @@ except ImportError:
 
 from services.branding_engine import (
     _detect_trip_type,
+    _extract_trip_label,
+    _format_price_amount,
     _format_price_display,
     _get_subtitle,
     _normalize_price,
@@ -49,11 +51,17 @@ class TestDetectTripType:
 
 
 class TestPriceAndSubtitle:
-    def test_format_price_one_way(self):
-        assert _format_price_display("from $1,511 One-Way") == "$1,511 one-way"
+    def test_format_price_amount_one_way(self):
+        assert _format_price_amount("from $1,511 One-Way") == "from $1,511"
+        assert _extract_trip_label("from $1,511 One-Way") == "one-way"
 
-    def test_format_price_round_trip(self):
-        assert _format_price_display("$2,033") == "$2,033 round-trip"
+    def test_format_price_amount_round_trip(self):
+        assert _format_price_amount("$2,069 round-trip") == "from $2,069"
+        assert _extract_trip_label("$2,069 round-trip") == "round-trip"
+
+    def test_format_price_amount_no_trip_type(self):
+        assert _format_price_amount("$2,033") == "from $2,033"
+        assert _extract_trip_label("$2,033") == ""
 
     def test_subtitle(self):
         assert _get_subtitle("London") == "Business Class to London"
