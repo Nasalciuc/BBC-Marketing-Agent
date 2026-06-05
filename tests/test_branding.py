@@ -12,7 +12,7 @@ try:
 except ImportError:
     HAS_PLAYWRIGHT = False
 
-from services.branding_engine import _normalize_price, generate_branded_image
+from services.branding_engine import _detect_trip_type, _normalize_price, generate_branded_image
 
 TEST_BG = "assets/defaults/default_background.jpg"
 HAS_BG = Path(TEST_BG).exists()
@@ -27,6 +27,18 @@ class TestNormalizePrice:
     def test_standard_formats(self):
         assert _normalize_price("$2,069") == "$2,069"
         assert _normalize_price("2,033") == "$2,033"
+
+
+class TestDetectTripType:
+    def test_one_way_variants(self):
+        assert _detect_trip_type("from $1,511 One-Way") == "One-Way"
+        assert _detect_trip_type("$1,511 one way") == "One-Way"
+        assert _detect_trip_type("oneway $999") == "One-Way"
+
+    def test_round_trip_default(self):
+        assert _detect_trip_type("from $2,033 Round-Trip") == "Round-Trip"
+        assert _detect_trip_type("$2,033") == "Round-Trip"
+        assert _detect_trip_type("from $2,033") == "Round-Trip"
 
 
 @pytest.mark.skipif(not HAS_PLAYWRIGHT or not HAS_BG, reason=SKIP_REASON)

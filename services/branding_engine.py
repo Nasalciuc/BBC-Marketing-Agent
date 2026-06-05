@@ -192,6 +192,14 @@ def _normalize_route(route: str) -> str:
     return route
 
 
+def _detect_trip_type(price: str) -> str:
+    """Detectează One-Way vs Round-Trip din price string."""
+    price_lower = price.lower()
+    if any(x in price_lower for x in ("one-way", "one way", "oneway")):
+        return "One-Way"
+    return "Round-Trip"
+
+
 def _normalize_price(price: str) -> str:
     """Asigură format $X,XXX — repară artefacte shell (\\,069, ,069)."""
     price = price.strip()
@@ -275,6 +283,7 @@ def _build_rendered_html(
         "{{BADGE}}", html.escape(format_badge_text(badge_text or event_name))
     )
     html_template = html_template.replace("{{ROUTE}}", html.escape(route))
+    html_template = html_template.replace("{{TRIP_TYPE}}", html.escape(_detect_trip_type(price)))
     html_template = html_template.replace("{{PRICE}}", html.escape(price))
     html_template = html_template.replace("{{URGENCY}}", html.escape(urgency_val))
     html_template = html_template.replace("{{HOOK}}", html.escape(hook))
