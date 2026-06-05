@@ -159,6 +159,16 @@
     margin-bottom: 4px;
   }
 
+  .price.benefits {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.35;
+    white-space: normal;
+    letter-spacing: 0;
+    max-width: 500px;
+    margin-bottom: 12px;
+  }
+
   .trip-label {
     font-size: 18px;
     font-weight: 500;
@@ -243,12 +253,11 @@
     <div class="main">
       <div class="event-tag">{{BADGE}}</div>
       <div class="headline">{{HEADLINE}}</div>
-      <div class="price-label">{{SUBTITLE}}</div>
-      <div class="price">{{PRICE}}</div>
-      {{TRIP_LABEL_HTML}}
+      {{SUBTITLE_HTML}}
+      {{PRICE_BLOCK_HTML}}
       <div class="urgency">{{URGENCY}}</div>
       <div class="hook">{{HOOK}}</div>
-      <div class="cta">{{CTA}}</div>
+      {{CTA_BLOCK_HTML}}
       <div class="footer-url">{{CTA_URL}}</div>
     </div>
   </div>

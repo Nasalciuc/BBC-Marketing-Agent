@@ -18,6 +18,7 @@ from services.branding_engine import (
     _format_price_amount,
     _format_price_display,
     _get_subtitle,
+    _is_monetary_price,
     _normalize_price,
     _resolve_headline,
     generate_branded_image,
@@ -65,6 +66,12 @@ class TestPriceAndSubtitle:
 
     def test_subtitle(self):
         assert _get_subtitle("London") == "Business Class to London"
+        assert _get_subtitle("London", "") == ""
+
+    def test_is_monetary_price(self):
+        assert _is_monetary_price("$1,511 one-way") is True
+        assert _is_monetary_price("Lie-flat seats · Lounge access") is False
+        assert _is_monetary_price("") is False
 
     def test_resolve_headline_emotional(self):
         assert _resolve_headline(None, "London is calling", "London") == "London is calling"

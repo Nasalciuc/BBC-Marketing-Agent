@@ -200,9 +200,19 @@ def _detect_trip_type(price: str) -> str:
     return "Round-Trip"
 
 
-def _get_subtitle(event_name: str) -> str:
-    """Subtitlu dinamic — fără origin city."""
+def _get_subtitle(event_name: str, subtitle: str | None = None) -> str:
+    """Subtitlu dinamic — fără origin city. subtitle='' ascunde rândul."""
+    if subtitle is not None:
+        return subtitle
     return f"Business Class to {event_name}"
+
+
+def _is_monetary_price(price: str) -> bool:
+    """True dacă price conține sumă ($X) — deal post vs brand benefits text."""
+    if not price or not price.strip():
+        return False
+    normalized = _normalize_price(price)
+    return bool(re.search(r"\$\d", normalized))
 
 
 def _strip_trip_type_words(text: str) -> str:
@@ -313,6 +323,7 @@ def _build_rendered_html(
     route_info: str | None = None,
     urgency: str | None = None,
     cta: str | None = None,
+    subtitle: str | None = None,
 ) -> str:
     """Populează template-ul HTML cu datele deal-ului."""
     from prompts.system_prompts import format_badge_text, get_urgency_text
@@ -322,13 +333,38 @@ def _build_rendered_html(
     route = _normalize_route(route)
     if route_info:
         route = _normalize_route(route_info.split("·")[0].strip())
-    price_raw = _normalize_price(price)
+    price_raw = _normalize_price(price) if price and price.strip() else ""
     display_headline = _resolve_headline(headline, route, event_name)
-    display_subtitle = _get_subtitle(event_name)
-    display_price = _format_price_amount(price_raw)
-    trip_label = _extract_trip_label(price)
+    display_subtitle = _get_subtitle(event_name, subtitle)
+    monetary = _is_monetary_price(price)
+
+    if monetary:
+        display_price = _format_price_amount(price_raw)
+        trip_label = _extract_trip_label(price)
+        price_css = "price"
+    elif price and price.strip():
+        display_price = price.strip()
+        trip_label = ""
+        price_css = "price benefits"
+    else:
+        display_price = ""
+        trip_label = ""
+        price_css = "price"
+
     trip_label_html = (
         f'<div class="trip-label">{html.escape(trip_label)}</div>' if trip_label else ""
+    )
+    if display_price or trip_label_html:
+        price_block_html = (
+            f'<div class="{price_css}">{html.escape(display_price)}</div>{trip_label_html}'
+        )
+    else:
+        price_block_html = ""
+
+    subtitle_html = (
+        f'<div class="price-label">{html.escape(display_subtitle)}</div>'
+        if display_subtitle
+        else ""
     )
     hook = hook_text or caption
 
@@ -342,18 +378,21 @@ def _build_rendered_html(
         if len(cta_parts) > 1 and cta_parts[1].strip():
             cta_url_val = cta_parts[1].strip()
 
+    cta_block_html = (
+        f'<div class="cta">{html.escape(cta_val)}</div>' if monetary else ""
+    )
+
     html_template = html_template.replace("{{BG}}", bg_uri)
     html_template = html_template.replace("{{LOGO_HTML}}", _get_logo_html())
     html_template = html_template.replace(
         "{{BADGE}}", html.escape(format_badge_text(badge_text or event_name))
     )
     html_template = html_template.replace("{{HEADLINE}}", html.escape(display_headline))
-    html_template = html_template.replace("{{SUBTITLE}}", html.escape(display_subtitle))
-    html_template = html_template.replace("{{PRICE}}", html.escape(display_price))
-    html_template = html_template.replace("{{TRIP_LABEL_HTML}}", trip_label_html)
+    html_template = html_template.replace("{{SUBTITLE_HTML}}", subtitle_html)
+    html_template = html_template.replace("{{PRICE_BLOCK_HTML}}", price_block_html)
     html_template = html_template.replace("{{URGENCY}}", html.escape(urgency_val))
     html_template = html_template.replace("{{HOOK}}", html.escape(hook))
-    html_template = html_template.replace("{{CTA}}", html.escape(cta_val))
+    html_template = html_template.replace("{{CTA_BLOCK_HTML}}", cta_block_html)
     html_template = html_template.replace("{{CTA_URL}}", html.escape(cta_url_val))
     return html_template
 
@@ -439,6 +478,7 @@ def generate_branded_image(
     route_info: str | None = None,
     urgency: str | None = None,
     cta: str | None = None,
+    subtitle: str | None = None,
 ) -> bytes:
     """
     Generează imagine branded BBC din HTML template.
@@ -464,6 +504,7 @@ def generate_branded_image(
         route_info=route_info,
         urgency=urgency,
         cta=cta,
+        subtitle=subtitle,
     )
 
     renderer = _resolve_renderer()
