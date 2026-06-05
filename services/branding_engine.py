@@ -200,6 +200,41 @@ def _detect_trip_type(price: str) -> str:
     return "Round-Trip"
 
 
+def _get_subtitle(event_name: str) -> str:
+    """Subtitlu dinamic — fără origin city."""
+    return f"Business Class to {event_name}"
+
+
+def _format_price_display(price: str) -> str:
+    """Preț pe o singură linie: '$1,511 one-way' sau '$2,033 round-trip'."""
+    text = _normalize_price(price)
+    text = re.sub(r"^from\s+", "", text, flags=re.I).strip()
+    trip_label = "one-way" if _detect_trip_type(price) == "One-Way" else "round-trip"
+    for pattern in (
+        r"\bone-way\b",
+        r"\bone way\b",
+        r"\boneway\b",
+        r"\bround-trip\b",
+        r"\bround trip\b",
+        r"\bOne-Way\b",
+        r"\bRound-Trip\b",
+    ):
+        text = re.sub(pattern, "", text, flags=re.I).strip()
+    text = text.strip(" -")
+    return f"{text} {trip_label}".strip()
+
+
+def _resolve_headline(headline: str | None, route: str, event_name: str) -> str:
+    """Headline emoțional — fără 'JFK →' când route e IATA legacy."""
+    if headline:
+        return headline
+    if "→" not in route and "->" not in route:
+        return route
+    if "→" in route:
+        return event_name or route.split("→", 1)[-1].strip()
+    return event_name or route.split("->", 1)[-1].strip()
+
+
 def _normalize_price(price: str) -> str:
     """Asigură format $X,XXX — repară artefacte shell (\\,069, ,069)."""
     price = price.strip()
@@ -264,7 +299,10 @@ def _build_rendered_html(
     route = _normalize_route(route)
     if route_info:
         route = _normalize_route(route_info.split("·")[0].strip())
-    price = _normalize_price(price)
+    price_raw = _normalize_price(price)
+    display_headline = _resolve_headline(headline, route, event_name)
+    display_subtitle = _get_subtitle(event_name)
+    display_price = _format_price_display(price_raw)
     hook = hook_text or caption
 
     urgency_val = urgency or urgency_text or get_urgency_text(event_name)
@@ -282,9 +320,9 @@ def _build_rendered_html(
     html_template = html_template.replace(
         "{{BADGE}}", html.escape(format_badge_text(badge_text or event_name))
     )
-    html_template = html_template.replace("{{ROUTE}}", html.escape(route))
-    html_template = html_template.replace("{{TRIP_TYPE}}", html.escape(_detect_trip_type(price)))
-    html_template = html_template.replace("{{PRICE}}", html.escape(price))
+    html_template = html_template.replace("{{HEADLINE}}", html.escape(display_headline))
+    html_template = html_template.replace("{{SUBTITLE}}", html.escape(display_subtitle))
+    html_template = html_template.replace("{{PRICE}}", html.escape(display_price))
     html_template = html_template.replace("{{URGENCY}}", html.escape(urgency_val))
     html_template = html_template.replace("{{HOOK}}", html.escape(hook))
     html_template = html_template.replace("{{CTA}}", html.escape(cta_val))

@@ -12,7 +12,14 @@ try:
 except ImportError:
     HAS_PLAYWRIGHT = False
 
-from services.branding_engine import _detect_trip_type, _normalize_price, generate_branded_image
+from services.branding_engine import (
+    _detect_trip_type,
+    _format_price_display,
+    _get_subtitle,
+    _normalize_price,
+    _resolve_headline,
+    generate_branded_image,
+)
 
 TEST_BG = "assets/defaults/default_background.jpg"
 HAS_BG = Path(TEST_BG).exists()
@@ -39,6 +46,23 @@ class TestDetectTripType:
         assert _detect_trip_type("from $2,033 Round-Trip") == "Round-Trip"
         assert _detect_trip_type("$2,033") == "Round-Trip"
         assert _detect_trip_type("from $2,033") == "Round-Trip"
+
+
+class TestPriceAndSubtitle:
+    def test_format_price_one_way(self):
+        assert _format_price_display("from $1,511 One-Way") == "$1,511 one-way"
+
+    def test_format_price_round_trip(self):
+        assert _format_price_display("$2,033") == "$2,033 round-trip"
+
+    def test_subtitle(self):
+        assert _get_subtitle("London") == "Business Class to London"
+
+    def test_resolve_headline_emotional(self):
+        assert _resolve_headline(None, "London is calling", "London") == "London is calling"
+
+    def test_resolve_headline_hides_iata_route(self):
+        assert _resolve_headline(None, "JFK → London", "London") == "London"
 
 
 @pytest.mark.skipif(not HAS_PLAYWRIGHT or not HAS_BG, reason=SKIP_REASON)
