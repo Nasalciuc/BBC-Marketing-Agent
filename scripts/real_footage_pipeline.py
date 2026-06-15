@@ -36,7 +36,12 @@ from prompts.brand_dna import BBC_BRAND_DNA, BBC_CONTENT_SELECTION_CONTEXT, BBC_
 from services.branding_engine import generate_branded_image  # noqa: E402
 from services.gemini_client import generate_event_image  # noqa: E402
 from services.pricing_engine import calculate_price, format_price  # noqa: E402
-from services.video_processor import brand_video, extract_frames, select_best_frame, trim_video  # noqa: E402
+from services.video_processor import (  # noqa: E402
+    brand_video,
+    extract_frames,
+    select_best_frame_with_claude,
+    trim_video,
+)
 from services.youtube_client import download_clip, search_youtube  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -244,10 +249,19 @@ Pick the one showing LUXURY, VIP EXPERIENCE, BEAUTIFUL ATMOSPHERE.""",
 
         frames = extract_frames(clip, str(OUT / f"frames_{i}"), interval_sec=3)
         if frames:
-            best = select_best_frame(frames)
             item["frames"] = frames
-            item["best_frame"] = best
-            print(f"     ✅ {len(frames)} frames → best: {Path(best).name}")
+            best = select_best_frame_with_claude(
+                frames,
+                event_name=item.get("name", ""),
+                anthropic_client=claude_client,
+                model=getattr(settings, "anthropic_model", "claude-sonnet-4-20250514"),
+            )
+            if best is None:
+                print("     🚫 Claude rejected ALL frames (logos/watermarks)")
+                print("     🎨 Falling back to Gemini AI image...")
+            else:
+                item["best_frame"] = best
+                print(f"     ✅ {len(frames)} frames → Claude approved: {Path(best).name}")
 
         trimmed = trim_video(clip, str(OUT / f"clip_{i}.mp4"), start=2, duration=10)
         if trimmed:
@@ -341,7 +355,7 @@ async def step5_telegram(selected: list[dict]) -> None:
     for i, item in enumerate(selected, 1):
         await asyncio.sleep(1)
 
-        src = "📸 Real" if item.get("frames") else "🎨 AI"
+        src = "📸 Real" if item.get("best_frame") else "🎨 AI"
         img = item.get("image")
 
         if img and Path(img).exists():
@@ -422,7 +436,7 @@ async def main() -> None:
     print("  ✅ PIPELINE COMPLETE")
     print(f"{'═' * 55}\n")
     for i, s in enumerate(selected, 1):
-        has_real = "📸" if s.get("frames") else "🎨"
+        has_real = "📸" if s.get("best_frame") else "🎨"
         has_vid = "📹" if s.get("video") else "—"
         print(f"  {i}. {has_real} {has_vid} {s['headline']}")
     print()

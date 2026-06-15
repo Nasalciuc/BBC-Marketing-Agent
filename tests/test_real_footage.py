@@ -34,6 +34,23 @@ def test_search_youtube_parses_json_lines():
     assert videos[0]["id"] == "abc123"
 
 
+def test_select_best_frame_with_claude_no_client():
+    from services.video_processor import select_best_frame_with_claude
+
+    frames = ["a.jpg", "b.jpg", "c.jpg"]
+    assert select_best_frame_with_claude(frames, "Test Event", anthropic_client=None) == "b.jpg"
+
+
+def test_extract_frames_skip_start_param():
+    import inspect
+
+    from services.video_processor import extract_frames
+
+    sig = inspect.signature(extract_frames)
+    assert "skip_start" in sig.parameters
+    assert sig.parameters["skip_start"].default == 5.0
+
+
 def test_extract_frames_finds_existing_jpegs(tmp_path: Path):
     from services.video_processor import extract_frames
 

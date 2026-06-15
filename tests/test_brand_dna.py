@@ -17,6 +17,11 @@ def test_youtube_context_luxury_focus():
     assert "crash" in BBC_YOUTUBE_SEARCH_CONTEXT.lower()
 
 
+def test_brand_dna_copyright_rules():
+    assert "REJECT any frame" in BBC_BRAND_DNA
+    assert "Visible logos" in BBC_BRAND_DNA
+
+
 def test_content_selection_filter():
     assert "ASPIRATIONAL" in BBC_CONTENT_SELECTION_CONTEXT
     assert "Accidents" in BBC_CONTENT_SELECTION_CONTEXT

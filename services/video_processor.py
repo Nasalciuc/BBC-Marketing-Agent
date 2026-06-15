@@ -32,9 +32,11 @@ def extract_frames(
     max_frames: int = 10,
     width: int = 1280,
     height: int = 720,
+    skip_start: float = 5.0,
 ) -> list[str]:
     """
     Extract JPEG frames at regular intervals.
+    Skips first skip_start seconds to avoid intro logos/watermarks.
     Returns list of frame file paths sorted chronologically.
     """
     ffmpeg = _get_ffmpeg()
@@ -48,6 +50,8 @@ def extract_frames(
     cmd = [
         ffmpeg,
         "-y",
+        "-ss",
+        str(skip_start),
         "-i",
         video_path,
         "-vf",
@@ -62,7 +66,7 @@ def extract_frames(
     try:
         subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
         frames = sorted(str(f) for f in Path(output_dir).glob("frame_*.jpg"))
-        log.info("Extracted %d frames from %s", len(frames), Path(video_path).name)
+        log.info("Extracted %d frames (skipped first %ss)", len(frames), skip_start)
         return frames
     except Exception as exc:
         log.error("Extract frames error: %s", exc)
@@ -70,10 +74,88 @@ def extract_frames(
 
 
 def select_best_frame(frames: list[str]) -> str | None:
-    """Pick the best frame — middle of the list (usually most interesting)."""
+    """Pick the best frame — middle of the list as default."""
     if not frames:
         return None
     return frames[len(frames) // 2]
+
+
+def select_best_frame_with_claude(
+    frames: list[str],
+    event_name: str,
+    anthropic_client=None,
+    model: str = "claude-sonnet-4-20250514",
+) -> str | None:
+    """
+    Claude SEES each frame and picks the best one for BBC.
+    Rejects frames with logos, watermarks, broadcast overlays.
+    Returns clean frame path or None if all are rejected.
+    """
+    if not frames:
+        return None
+    if not anthropic_client:
+        return select_best_frame(frames)
+
+    import base64
+
+    sample = frames[:5] if len(frames) > 5 else frames
+
+    images_content: list[dict] = []
+    for i, fp in enumerate(sample):
+        with open(fp, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("utf-8")
+        images_content.append(
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},
+            }
+        )
+        images_content.append({"type": "text", "text": f"Frame {i}"})
+
+    images_content.append(
+        {
+            "type": "text",
+            "text": f"""These are frames extracted from a YouTube video about "{event_name}".
+I need ONE frame for a BuyBusinessClass.com branded post.
+
+CHECK EACH FRAME:
+- Does it have visible LOGOS from other companies? (TV channels, sponsors)
+- Does it have WATERMARKS or BANNERS? (subscribe buttons, app ads, tickers)
+- Does it have BROADCAST OVERLAYS? (scores, timers, news chyrons)
+- Is it VISUALLY APPEALING for a luxury travel brand?
+
+REPLY with EXACTLY one of:
+- "BEST: 0" (or 1, 2, 3, 4) — the number of the cleanest, most beautiful frame
+- "NONE" — if ALL frames have logos/watermarks/overlays and none are usable
+
+Pick the frame that is CLEAN and BEAUTIFUL. No logos. No watermarks.""",
+        }
+    )
+
+    try:
+        resp = anthropic_client.messages.create(
+            model=model,
+            max_tokens=50,
+            messages=[{"role": "user", "content": images_content}],
+        )
+        answer = resp.content[0].text.strip().upper()
+
+        if "NONE" in answer:
+            log.warning("Claude rejected ALL frames (logos/watermarks)")
+            return None
+
+        for ch in answer:
+            if ch.isdigit():
+                idx = int(ch)
+                if 0 <= idx < len(sample):
+                    log.info("Claude selected frame %d: %s", idx, sample[idx])
+                    return sample[idx]
+
+        return select_best_frame(frames)
+
+    except Exception as exc:
+        log.warning("Claude frame check failed: %s — using middle frame", exc)
+        return select_best_frame(frames)
 
 
 def trim_video(

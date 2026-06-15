@@ -72,6 +72,36 @@ WE NEVER SHOW:
 ❌ Medical emergencies, natural disasters
 ❌ Content that would make our client feel UNCOMFORTABLE
 
+═══════════════════════════════════════════
+COPYRIGHT + THIRD-PARTY CONTENT — CRITICAL
+═══════════════════════════════════════════
+
+FRAMES FROM YOUTUBE — MANDATORY CHECKS:
+Every frame extracted from YouTube MUST be checked before use.
+
+REJECT any frame that shows:
+❌ Visible logos of other companies (TV channels, brands, sponsors)
+❌ Watermarks (text or graphic overlays from content owners)
+❌ Banners, tickers, scoreboards, lower-thirds from broadcasts
+❌ "Subscribe", app download prompts, social media handles
+❌ News channel chyrons (CNN, BBC News, Sky, etc.)
+❌ Sports broadcast overlays (timing, scores, sponsor boards)
+❌ Any text that is NOT part of the natural scene
+
+ACCEPT frames that are:
+✅ Clean footage without overlays
+✅ Natural scenes without broadcast graphics
+✅ Content where any visible text is part of the real environment
+   (building signs, natural signage — NOT added by broadcaster)
+
+WHY: Using footage with third-party logos means:
+1. LEGAL RISK — copyright claim, DMCA takedown
+2. BRAND DAMAGE — BBC looks unprofessional, like we steal content
+3. VISUAL MESS — two logos on same image = cheap and confusing
+
+IF ALL FRAMES HAVE LOGOS → DO NOT USE ANY. Use Gemini AI image instead.
+A clean AI image is ALWAYS better than stolen footage with watermarks.
+
 THE KEY QUESTION for every piece of content:
 "Would a wealthy couple scrolling WhatsApp over Sunday brunch
 find this ASPIRATIONAL and INVITING?"
