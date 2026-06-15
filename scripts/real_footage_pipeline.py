@@ -32,6 +32,7 @@ from google import genai  # noqa: E402
 from google.genai import types  # noqa: E402
 
 from config import settings  # noqa: E402
+from prompts.brand_dna import BBC_BRAND_DNA, BBC_CONTENT_SELECTION_CONTEXT, BBC_YOUTUBE_SEARCH_CONTEXT  # noqa: E402
 from services.branding_engine import generate_branded_image  # noqa: E402
 from services.gemini_client import generate_event_image  # noqa: E402
 from services.pricing_engine import calculate_price, format_price  # noqa: E402
@@ -100,6 +101,15 @@ def step1_search(gemini: genai.Client) -> list[dict]:
 Per item return:
 {{"type":"event|news|destination","name":"...","city":"...","dates":"...","details":"3-4 specific fact sentences","youtube_query":"best YouTube search for footage of this","visual":"what this looks like visually"}}
 
+IMPORTANT — YOUTUBE QUERIES:
+For each item, write a youtube_query that finds LUXURY/VIP/PREMIUM footage.
+We are a LUXURY brand. Our clients are wealthy Americans.
+- For F1 events → "Monaco Grand Prix VIP hospitality yacht party" NOT "crash highlights"
+- For tennis → "Wimbledon hospitality suite experience" NOT "best rallies"
+- For airline news → "Qatar Airways QSuite cabin tour" NOT "airline problems"
+- Always include words: luxury, VIP, premium, cinematic, hospitality, experience
+- The footage should make someone WANT to be there
+
 Return JSON array, 6-8 items. Only REAL facts from web. No markdown fences."""
 
     resp = gemini.models.generate_content(
@@ -127,19 +137,29 @@ def step2_select(claude_client: anthropic.Anthropic, findings: list[dict]) -> li
     resp = claude_client.messages.create(
         model=getattr(settings, "anthropic_model", "claude-sonnet-4-20250514"),
         max_tokens=2500,
+        system=BBC_BRAND_DNA + "\n\n" + BBC_CONTENT_SELECTION_CONTEXT,
         messages=[
             {
                 "role": "user",
-                "content": f"""Content director for BuyBusinessClass.com (premium business class bookings, US clients).
+                "content": f"""Gemini found these items from this week's web search:
 
-Gemini found: {json.dumps(findings, ensure_ascii=False)}
+{json.dumps(findings, ensure_ascii=False)}
 
-Select 3 BEST for WhatsApp Channel. Mix categories. Pick most VISUAL stories.
+Select 3 BEST for our WhatsApp Channel.
 
-Per pick:
-{{"index":0,"headline":"Emotional max 8 words","caption":"Full WhatsApp caption. Emoji start. Premium tone. Key fact. End EXACTLY with:\\n\\nbuybusinessclass.com\\n☎️ +1 888-322-7999 📩 deals@buybusinessclass.com","post_type":"deal|news"}}
+REMEMBER THE BRAND:
+- We sell the LUXURY EXPERIENCE around events, not the event action
+- F1 → show the paddock champagne, NOT the crashes
+- We want our client to feel INSPIRED, not thrilled by danger
+- Mix: 1 event + 1 airline news + 1 destination
 
-JSON array, exactly 3. index = 0-based position in findings. No markdown.""",
+For each, also write the YouTube search query that will find
+LUXURY/VIP/PREMIUM footage — NOT action/crash/controversy footage.
+
+Per pick return:
+{{"index":0,"headline":"Emotional max 8 words","youtube_query":"luxury-focused YouTube search","caption":"Full WhatsApp caption. Emoji start. Premium whisper tone. End with:\\n\\nbuybusinessclass.com\\n☎️ +1 888-322-7999 📩 deals@buybusinessclass.com","post_type":"deal|news"}}
+
+JSON array, exactly 3. No markdown.""",
             }
         ],
     )
@@ -151,6 +171,8 @@ JSON array, exactly 3. index = 0-based position in findings. No markdown.""",
         item["headline"] = p["headline"]
         item["caption"] = p["caption"]
         item["post_type"] = p.get("post_type", "news")
+        if p.get("youtube_query"):
+            item["youtube_query"] = p["youtube_query"]
         selected.append(item)
         print(f"  ✅ {item['headline']}")
 
@@ -160,20 +182,57 @@ JSON array, exactly 3. index = 0-based position in findings. No markdown.""",
     return selected
 
 
-def step3_footage(selected: list[dict]) -> None:
+def step3_footage(claude_client: anthropic.Anthropic, selected: list[dict]) -> None:
     print("\n📹 STEP 3 — YouTube download + frame extraction...\n")
 
     for i, item in enumerate(selected, 1):
-        q = item.get("youtube_query", item.get("name", ""))
+        q = item.get("youtube_query", item.get("name", "") + " luxury VIP experience")
         print(f"  {i}. Search: '{q[:50]}'")
 
-        videos = search_youtube(q, max_results=1)
+        videos = search_youtube(q, max_results=3)
         if not videos:
             print("     ⚠️ No YouTube results")
             continue
 
-        url = videos[0]["url"]
-        print(f"     Found: {videos[0]['title'][:50]}")
+        titles = "\n".join(
+            f"  {j}. {v['title']} ({v['duration']}s, {v.get('uploader', '')})"
+            for j, v in enumerate(videos)
+        )
+
+        try:
+            pick = claude_client.messages.create(
+                model=getattr(settings, "anthropic_model", "claude-sonnet-4-20250514"),
+                max_tokens=200,
+                system=BBC_YOUTUBE_SEARCH_CONTEXT,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": f"""Which YouTube video is best for BuyBusinessClass.com post about "{item.get('name', '')}"?
+
+Videos found:
+{titles}
+
+Reply with JUST the number (0, 1, or 2).
+If NONE are suitable (all show crashes, controversy, negativity), reply "NONE".
+Pick the one showing LUXURY, VIP EXPERIENCE, BEAUTIFUL ATMOSPHERE.""",
+                    }
+                ],
+            )
+            choice = pick.content[0].text.strip()
+
+            if choice.upper() == "NONE":
+                print("     🚫 Claude rejected all videos (not luxury content)")
+                continue
+
+            idx = int(choice) if choice.isdigit() else 0
+            idx = min(idx, len(videos) - 1)
+            chosen = videos[idx]
+            print(f"     🧠 Claude picked: {chosen['title'][:50]}")
+        except Exception as exc:
+            chosen = videos[0]
+            print(f"     ⚠️ Claude pick failed ({exc}), using first: {chosen['title'][:50]}")
+
+        url = chosen["url"]
 
         clip = download_clip(url, str(OUT / f"raw_{i}.mp4"), max_seconds=30)
         if not clip:
@@ -355,7 +414,7 @@ async def main() -> None:
 
     findings = step1_search(gemini)
     selected = step2_select(claude_client, findings)
-    step3_footage(selected)
+    step3_footage(claude_client, selected)
     await step4_brand(selected)
     await step5_telegram(selected)
 

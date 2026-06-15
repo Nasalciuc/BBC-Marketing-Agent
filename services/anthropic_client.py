@@ -91,6 +91,8 @@ def _parse_json_response(text: str) -> dict:
 
 async def classify_intent(message: str, context: dict) -> dict:
     """Classify director message → intent + entities + response."""
+    from prompts.brand_dna import BBC_BRAND_DNA
+
     client = _get_client()
     if not client:
         return {
@@ -109,7 +111,7 @@ async def classify_intent(message: str, context: dict) -> dict:
         else "  (no history)"
     )
 
-    system = AGENT_SYSTEM.format(
+    system = BBC_BRAND_DNA + "\n\n" + AGENT_SYSTEM.format(
         state=state,
         current_deal=current_deal or "none",
         history=history_str,
