@@ -16,7 +16,6 @@ from services.branding_engine import (
     _detect_trip_type,
     _extract_trip_label,
     _format_price_amount,
-    _format_price_display,
     _get_subtitle,
     _is_monetary_price,
     _normalize_price,
