@@ -5,10 +5,12 @@ def test_telegram_imports():
     from services.telegram_client import (
         send_approval_request,
         send_message,
+        send_video,
     )
 
     assert callable(send_message)
     assert callable(send_approval_request)
+    assert callable(send_video)
 
 
 def test_callback_data_format():

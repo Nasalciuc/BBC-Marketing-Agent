@@ -115,7 +115,6 @@ def _discover_events_sync(week_offset: int) -> list[dict]:
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=0.3,
-            response_mime_type="application/json",
             tools=[types.Tool(google_search=types.GoogleSearch())],
         ),
     )

@@ -88,6 +88,47 @@ async def send_photo(
         return None
 
 
+async def send_video(
+    chat_id: int | str,
+    video_path: str,
+    caption: str = "",
+    reply_markup: dict | None = None,
+) -> dict | None:
+    """Send video file to Telegram chat via multipart upload."""
+    from pathlib import Path as P
+
+    if not settings.telegram_bot_token:
+        log.error("TELEGRAM_BOT_TOKEN not set")
+        return None
+
+    url = f"{BASE_URL}/bot{settings.telegram_bot_token}/sendVideo"
+    video_bytes = P(video_path).read_bytes()
+    filename = P(video_path).name
+
+    data: dict = {"chat_id": str(chat_id)}
+    if caption:
+        data["caption"] = caption[:1024]
+        data["parse_mode"] = "Markdown"
+    if reply_markup:
+        data["reply_markup"] = json.dumps(reply_markup)
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as http:
+            resp = await http.post(
+                url,
+                data=data,
+                files={"video": (filename, video_bytes, "video/mp4")},
+            )
+            if resp.status_code == 200:
+                log.info("Video sent to %s: %s", chat_id, filename)
+                return resp.json()
+            log.error("sendVideo %s: %s", resp.status_code, resp.text[:200])
+            return None
+    except Exception as exc:
+        log.error("sendVideo error: %s", exc)
+        return None
+
+
 async def answer_callback_query(callback_id: str, text: str = "") -> dict | None:
     """Răspunde la callback query (elimină loading de pe buton)."""
     if not settings.telegram_bot_token:

@@ -7,6 +7,11 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
 
+    # Gemini Veo (video generation — paid tier required)
+    veo_model: str = ""  # empty = veo-3.1-generate-preview (or fast if fast=True)
+    veo_default_resolution: str = "1080p"
+    veo_default_duration: int = 8
+
     # Anthropic (Claude — text, captions, AI agent)
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-20250514"
@@ -14,6 +19,9 @@ class Settings(BaseSettings):
 
     # Unsplash (stock photos)
     unsplash_access_key: str = ""
+
+    # Pexels (stock photos + videos)
+    pexels_api_key: str = ""
 
     # Supabase
     supabase_url: str = ""
