@@ -39,6 +39,7 @@ from services.pricing_engine import calculate_price, format_price  # noqa: E402
 from services.video_processor import (  # noqa: E402
     brand_video,
     extract_frames,
+    select_best_frame,
     select_best_frame_with_claude,
     trim_video,
 )
@@ -158,11 +159,18 @@ REMEMBER THE BRAND:
 - We want our client to feel INSPIRED, not thrilled by danger
 - Mix: 1 event + 1 airline news + 1 destination
 
-For each, also write the YouTube search query that will find
-LUXURY/VIP/PREMIUM footage — NOT action/crash/controversy footage.
+For each, write a SPECIFIC youtube_query for YouTube search:
+- Include BRAND NAMES when relevant (Qatar Airways, Emirates, Air France, Dior)
+- Include YEAR (2025 or 2026) for events
+- Include SPECIFIC LOCATION (Bellagio for Lake Como, Monte Carlo for Monaco)
+- Include one of: cinematic, drone, aerial, 4K, tour, experience, review
+- Good: "Qatar Airways Qsuite cabin tour 2026 review"
+- Good: "Lake Como Bellagio Villa luxury drone aerial 4K"
+- Good: "Paris Haute Couture Dior runway front row 2026"
+- Bad: "Lake Como luxury villa" (too vague — YouTube returns irrelevant results)
 
 Per pick return:
-{{"index":0,"headline":"Emotional max 8 words","youtube_query":"luxury-focused YouTube search","caption":"Full WhatsApp caption. Emoji start. Premium whisper tone. End with:\\n\\nbuybusinessclass.com\\n☎️ +1 888-322-7999 📩 deals@buybusinessclass.com","post_type":"deal|news"}}
+{{"index":0,"headline":"Emotional max 8 words","youtube_query":"specific YouTube search query","caption":"Full WhatsApp caption. Emoji start. Premium whisper tone. End with:\\n\\nbuybusinessclass.com\\n☎️ +1 888-322-7999 📩 deals@buybusinessclass.com","post_type":"deal|news"}}
 
 JSON array, exactly 3. No markdown.""",
             }
@@ -188,58 +196,92 @@ JSON array, exactly 3. No markdown.""",
 
 
 def step3_footage(claude_client: anthropic.Anthropic, selected: list[dict]) -> None:
+    """Download YouTube footage with smart retry + fallback chain."""
     print("\n📹 STEP 3 — YouTube download + frame extraction...\n")
 
+    yt_context = BBC_YOUTUBE_SEARCH_CONTEXT
+
     for i, item in enumerate(selected, 1):
-        q = item.get("youtube_query", item.get("name", "") + " luxury VIP experience")
-        print(f"  {i}. Search: '{q[:50]}'")
+        name = item.get("name", "")
+        city = item.get("city", "")
+        primary_q = item.get("youtube_query", f"{name} luxury VIP experience")
 
-        videos = search_youtube(q, max_results=3)
-        if not videos:
-            print("     ⚠️ No YouTube results")
-            continue
+        queries = [
+            primary_q,
+            f"{name} {city} cinematic 4K drone aerial luxury".strip(),
+            f"{city} luxury travel cinematic aerial sunset 4K".strip()
+            if city
+            else f"{name} premium experience cinematic",
+        ]
+        queries = list(dict.fromkeys(q for q in queries if q))
 
-        titles = "\n".join(
-            f"  {j}. {v['title']} ({v['duration']}s, {v.get('uploader', '')})"
-            for j, v in enumerate(videos)
-        )
+        print(f"  {i}. {item.get('headline', name)}")
+        chosen_video: dict | None = None
+        needs_frame_check = False
+        videos: list[dict] = []
 
-        try:
-            pick = claude_client.messages.create(
-                model=getattr(settings, "anthropic_model", "claude-sonnet-4-20250514"),
-                max_tokens=200,
-                system=BBC_YOUTUBE_SEARCH_CONTEXT,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": f"""Which YouTube video is best for BuyBusinessClass.com post about "{item.get('name', '')}"?
+        for attempt, q in enumerate(queries, 1):
+            print(f"     🔍 Attempt {attempt}: '{q[:55]}'")
 
-Videos found:
-{titles}
-
-Reply with JUST the number (0, 1, or 2).
-If NONE are suitable (all show crashes, controversy, negativity), reply "NONE".
-Pick the one showing LUXURY, VIP EXPERIENCE, BEAUTIFUL ATMOSPHERE.""",
-                    }
-                ],
-            )
-            choice = pick.content[0].text.strip()
-
-            if choice.upper() == "NONE":
-                print("     🚫 Claude rejected all videos (not luxury content)")
+            videos = search_youtube(q, max_results=3)
+            if not videos:
+                print("        ⚠️ No results")
                 continue
 
-            idx = int(choice) if choice.isdigit() else 0
-            idx = min(idx, len(videos) - 1)
-            chosen = videos[idx]
-            print(f"     🧠 Claude picked: {chosen['title'][:50]}")
-        except Exception as exc:
-            chosen = videos[0]
-            print(f"     ⚠️ Claude pick failed ({exc}), using first: {chosen['title'][:50]}")
+            titles = "\n".join(
+                f"  {j}. {v['title']} ({v['duration']}s, {v.get('uploader', '')})"
+                for j, v in enumerate(videos)
+            )
 
-        url = chosen["url"]
+            try:
+                pick = claude_client.messages.create(
+                    model=getattr(settings, "anthropic_model", "claude-sonnet-4-20250514"),
+                    max_tokens=100,
+                    system=yt_context,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": f"""Best video for luxury post about "{name}"?
 
-        clip = download_clip(url, str(OUT / f"raw_{i}.mp4"), max_seconds=30)
+{titles}
+
+Reply JUST the number (0/1/2).
+Only reply "NONE" if videos show crashes, accidents, violence, or explicit negativity.
+Travel vlogs, drone footage, cinematic city tours are ACCEPTABLE even if not perfectly luxury.
+We prefer REAL footage over nothing.""",
+                        }
+                    ],
+                )
+                choice = pick.content[0].text.strip().upper()
+
+                if "NONE" not in choice:
+                    idx = 0
+                    for ch in choice:
+                        if ch.isdigit():
+                            idx = int(ch)
+                            break
+                    idx = min(idx, len(videos) - 1)
+                    chosen_video = videos[idx]
+                    needs_frame_check = False
+                    print(f"        ✅ Claude picked: {chosen_video['title'][:50]}")
+                    break
+                print("        🚫 Claude: none suitable")
+            except Exception as exc:
+                chosen_video = videos[0]
+                needs_frame_check = False
+                print(f"        ⚠️ Claude error ({exc}) — using first result")
+                break
+
+        if not chosen_video and videos:
+            print("     📥 All queries rejected — downloading first result for frame check...")
+            chosen_video = videos[0]
+            needs_frame_check = True
+
+        if not chosen_video:
+            print("     ⬜ No YouTube video found at all")
+            continue
+
+        clip = download_clip(chosen_video["url"], str(OUT / f"raw_{i}.mp4"), max_seconds=30)
         if not clip:
             print("     ⚠️ Download failed")
             continue
@@ -247,23 +289,31 @@ Pick the one showing LUXURY, VIP EXPERIENCE, BEAUTIFUL ATMOSPHERE.""",
         print(f"     ✅ Downloaded: {Path(clip).stat().st_size // 1024}KB")
         item["video_raw"] = clip
 
-        frames = extract_frames(clip, str(OUT / f"frames_{i}"), interval_sec=3)
-        if frames:
-            item["frames"] = frames
+        frames = extract_frames(clip, str(OUT / f"frames_{i}"), interval_sec=3, skip_start=5)
+        if not frames:
+            print("     ⚠️ No frames extracted")
+            continue
+
+        if needs_frame_check:
             best = select_best_frame_with_claude(
                 frames,
-                event_name=item.get("name", ""),
+                event_name=name,
                 anthropic_client=claude_client,
                 model=getattr(settings, "anthropic_model", "claude-sonnet-4-20250514"),
             )
             if best is None:
-                print("     🚫 Claude rejected ALL frames (logos/watermarks)")
-                print("     🎨 Falling back to Gemini AI image...")
-            else:
-                item["best_frame"] = best
-                print(f"     ✅ {len(frames)} frames → Claude approved: {Path(best).name}")
+                print("     🚫 Claude rejected ALL frames (logos/watermarks/bad content)")
+                continue
+            item["best_frame"] = best
+            item["frames"] = frames
+            print(f"     ✅ Claude approved frame: {Path(best).name}")
+        else:
+            best = select_best_frame(frames)
+            item["frames"] = frames
+            item["best_frame"] = best
+            print(f"     ✅ {len(frames)} frames → best: {Path(best).name}")
 
-        trimmed = trim_video(clip, str(OUT / f"clip_{i}.mp4"), start=2, duration=10)
+        trimmed = trim_video(clip, str(OUT / f"clip_{i}.mp4"), start=5, duration=10)
         if trimmed:
             item["video_clip"] = trimmed
             print(f"     ✅ Clip 10s: {Path(trimmed).stat().st_size // 1024}KB")
