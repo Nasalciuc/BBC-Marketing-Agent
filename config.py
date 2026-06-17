@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # Anthropic (Claude — text, captions, AI agent)
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-4-20250514"
+    anthropic_model: str = "claude-sonnet-4-6"
     text_llm_provider: str = "claude"  # claude | gemini
 
     # Unsplash (stock photos)

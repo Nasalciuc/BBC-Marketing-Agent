@@ -141,7 +141,7 @@ def step2_select(claude_client: anthropic.Anthropic, findings: list[dict]) -> li
     print("\n🧠 STEP 2 — Claude selecting top 3...\n")
 
     resp = claude_client.messages.create(
-        model=getattr(settings, "anthropic_model", "claude-sonnet-4-20250514"),
+        model=getattr(settings, "anthropic_model", "claude-sonnet-4-6"),
         max_tokens=2500,
         system=BBC_BRAND_DNA + "\n\n" + BBC_CONTENT_SELECTION_CONTEXT,
         messages=[
@@ -209,14 +209,66 @@ JSON array, exactly 3. No markdown.""",
     return selected
 
 
-def step3_footage(claude_client: anthropic.Anthropic, selected: list[dict]) -> None:
-    """Download YouTube footage — official brand videos first, cinematic fallback."""
-    print("\n📹 STEP 3 — YouTube: official first, cinematic fallback...\n")
+OFFICIAL_UPLOADERS = {
+    "qatar airways",
+    "emirates",
+    "singapore airlines",
+    "ana",
+    "etihad",
+    "cathay pacific",
+    "british airways",
+    "air france",
+    "lufthansa",
+    "turkish airlines",
+    "japan airlines",
+    "korean air",
+    "eva air",
+    "swiss",
+    "virgin atlantic",
+    "delta",
+    "united airlines",
+    "american airlines",
+    "four seasons",
+    "ritz-carlton",
+    "aman",
+    "mandarin oriental",
+    "rosewood",
+    "peninsula",
+    "st regis",
+    "park hyatt",
+    "formula 1",
+    "f1",
+    "atp tour",
+    "wimbledon",
+    "art basel",
+    "paris fashion week",
+    "met gala",
+    "visit japan",
+    "visit dubai",
+    "discover dubai",
+    "visit london",
+    "tourism australia",
+    "singapore tourism",
+}
 
-    yt_context = BBC_YOUTUBE_SEARCH_CONTEXT
+
+def _is_official_channel(uploader: str) -> bool:
+    """Check if uploader is a known official brand channel."""
+    if not uploader:
+        return False
+    up_lower = uploader.lower().strip()
+    return any(brand in up_lower or up_lower in brand for brand in OFFICIAL_UPLOADERS)
+
+
+def step3_footage(claude_client: anthropic.Anthropic, selected: list[dict]) -> None:
+    """Download YouTube footage — auto-pick official, Claude for rest, fallback download."""
+    print("\n📹 STEP 3 — YouTube footage (official-first)...\n")
+
+    yt_context = BBC_BRAND_DNA + "\n\n" + BBC_YOUTUBE_SEARCH_CONTEXT
 
     for i, item in enumerate(selected, 1):
         name = item.get("name", "")
+        headline = item.get("headline", name)
         legacy_q = item.get("youtube_query", "")
 
         queries = [
@@ -230,11 +282,12 @@ def step3_footage(claude_client: anthropic.Anthropic, selected: list[dict]) -> N
             ),
         ]
 
-        print(f"  {i}. {item.get('headline', name)}")
+        print(f"  {i}. {headline}")
         chosen_video: dict | None = None
+        all_videos_seen: list[dict] = []
 
-        for attempt, q in enumerate(queries, 1):
-            label = "OFFICIAL" if attempt == 1 else "CINEMATIC"
+        for attempt, q in enumerate(queries):
+            label = "OFFICIAL" if attempt == 0 else "CINEMATIC"
             print(f"     🔍 {label}: '{q[:55]}'")
 
             videos = search_youtube(q, max_results=3)
@@ -242,62 +295,75 @@ def step3_footage(claude_client: anthropic.Anthropic, selected: list[dict]) -> N
                 print("        ⚠️ No results")
                 continue
 
+            all_videos_seen.extend(videos)
+
+            for v in videos:
+                if _is_official_channel(v.get("uploader", "")):
+                    chosen_video = v
+                    print(f"        🏆 AUTO-PICK official: \"{v['title'][:45]}\"")
+                    print(f"           by {v['uploader']} ({v.get('view_count', 0):,} views)")
+                    break
+
+            if chosen_video:
+                break
+
             video_info = "\n".join(
                 f"  {j}. \"{v['title']}\"\n"
-                f"     Uploader: {v.get('uploader', 'unknown')}\n"
-                f"     Views: {v.get('view_count', 0):,} | Duration: {v['duration']}s"
+                f"     Uploader: {v.get('uploader', '?')} | "
+                f"Views: {v.get('view_count', 0):,} | Duration: {v['duration']}s"
                 for j, v in enumerate(videos)
             )
 
             try:
                 pick = claude_client.messages.create(
-                    model=getattr(settings, "anthropic_model", "claude-sonnet-4-20250514"),
-                    max_tokens=150,
+                    model=getattr(settings, "anthropic_model", "claude-sonnet-4-6"),
+                    max_tokens=50,
                     system=yt_context,
                     messages=[
                         {
                             "role": "user",
-                            "content": f"""Pick the best YouTube video for a BuyBusinessClass.com post about "{name}".
+                            "content": f"""Best video for luxury post about "{headline}"?
 
 {video_info}
 
-EVALUATION:
-- Uploader is airline/brand/official channel? → STRONG preference
-- Uploader is known premium creator (Sam Chui, The Points Guy)? → OK
-- Title has "official", "reveal", "launch", "commercial"? → bonus
-- Duration 1-5 min (promo) preferred over 10-30 min (vlog)
-- Title has "MY", "I TRIED", "OMG", "HONEST REVIEW"? → REJECT
-- Shaky/amateur implied by title? → REJECT
-
-Reply with JUST the number (0, 1, or 2).
-Reply "NONE" ONLY if ALL are amateur vlogger content.
-Prefer official brand content even if view count is lower.""",
+Reply ONLY with the number: 0, 1, or 2
+If ALL are amateur vloggers with shaky footage, reply exactly: NONE""",
                         }
                     ],
                 )
-                choice = pick.content[0].text.strip().upper()
+                raw_choice = pick.content[0].text.strip()
+                cleaned = raw_choice.split("\n")[0].split("—")[0].split("-")[0].strip()
 
-                if "NONE" not in choice:
-                    idx = 0
-                    for ch in choice:
-                        if ch.isdigit():
-                            idx = int(ch)
-                            break
-                    idx = min(idx, len(videos) - 1)
+                if cleaned.upper() == "NONE":
+                    print("        🚫 Claude: NONE")
+                    continue
+
+                idx = None
+                for ch in cleaned:
+                    if ch.isdigit():
+                        idx = int(ch)
+                        break
+
+                if idx is not None and 0 <= idx < len(videos):
                     chosen_video = videos[idx]
-                    print(
-                        f"        ✅ Claude: \"{chosen_video['title'][:45]}\" "
-                        f"by {chosen_video.get('uploader', '?')}"
-                    )
+                    print(f"        ✅ Claude picked #{idx}: \"{chosen_video['title'][:45]}\"")
+                    print(f"           by {chosen_video.get('uploader', '?')}")
                     break
-                print(f"        🚫 Claude: none suitable for {label}")
+                print(f"        ⚠️ Claude unclear: '{raw_choice}' — trying next query")
+
             except Exception as exc:
-                chosen_video = videos[0]
-                print(f"        ⚠️ Claude error ({exc}) — using first: {chosen_video['title'][:45]}")
-                break
+                print(f"        ⚠️ Claude error: {exc}")
+
+        if not chosen_video and all_videos_seen:
+            short_videos = [v for v in all_videos_seen if v.get("duration", 999) <= 300]
+            fallback = short_videos[0] if short_videos else all_videos_seen[0]
+
+            print("     📥 FALLBACK: downloading first for frame check...")
+            print(f"        \"{fallback['title'][:45]}\" by {fallback.get('uploader', '?')}")
+            chosen_video = {**fallback, "_is_fallback": True}
 
         if not chosen_video:
-            print("     ⬜ No video found — AI image only")
+            print("     ⬜ Zero YouTube results — AI image only")
             continue
 
         clip = download_clip(chosen_video["url"], str(OUT / f"raw_{i}.mp4"), max_seconds=30)
@@ -310,30 +376,34 @@ Prefer official brand content even if view count is lower.""",
 
         frames = extract_frames(clip, str(OUT / f"frames_{i}"), interval_sec=3, skip_start=5)
         if not frames:
-            print("     ⚠️ No frames")
+            print("     ⚠️ No frames extracted")
             continue
 
-        best = select_best_frame_with_claude(
-            frames,
-            event_name=name,
-            anthropic_client=claude_client,
-            model=getattr(settings, "anthropic_model", "claude-sonnet-4-20250514"),
-        )
-        if not best:
+        if chosen_video.get("_is_fallback"):
+            print("     🧠 Claude checking frames (fallback video)...")
+            best = select_best_frame_with_claude(
+                frames,
+                event_name=headline,
+                anthropic_client=claude_client,
+                model=getattr(settings, "anthropic_model", "claude-sonnet-4-6"),
+            )
+            if not best:
+                best = select_best_frame(frames)
+            if not best:
+                print("     🚫 Claude rejected ALL frames — AI image only")
+                continue
+            print(f"     ✅ Claude approved frame: {Path(best).name}")
+        else:
             best = select_best_frame(frames)
 
-        if best:
-            item["frames"] = frames
-            item["best_frame"] = best
-            print(f"     ✅ Frame approved: {Path(best).name}")
-        else:
-            print("     🚫 All frames rejected (logos/quality)")
-            continue
+        item["frames"] = frames
+        item["best_frame"] = best
+        print(f"     ✅ {len(frames)} frames → best: {Path(best).name}")
 
         trimmed = trim_video(clip, str(OUT / f"clip_{i}.mp4"), start=5, duration=10)
         if trimmed:
             item["video_clip"] = trimmed
-            print(f"     ✅ Clip: {Path(trimmed).stat().st_size // 1024}KB")
+            print(f"     ✅ Clip 10s: {Path(trimmed).stat().st_size // 1024}KB")
 
 
 async def step4_brand(selected: list[dict]) -> None:

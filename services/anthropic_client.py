@@ -74,7 +74,7 @@ def _get_client():
 def _get_model() -> str:
     from config import settings
 
-    return settings.anthropic_model or "claude-sonnet-4-20250514"
+    return settings.anthropic_model or "claude-sonnet-4-6"
 
 
 def _parse_json_response(text: str) -> dict:
