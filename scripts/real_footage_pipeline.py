@@ -17,7 +17,7 @@ import asyncio
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -98,14 +98,25 @@ def _parse_json_array(text: str) -> list[dict]:
 def step1_search(gemini: genai.Client) -> list[dict]:
     print(f"\n🔍 STEP 1 — Gemini searching web ({TODAY})...\n")
 
+    now = datetime.now()
+    cutoff_past = now - timedelta(weeks=4)
+    future_end = now + timedelta(weeks=4)
+
     prompt = f"""Today is {TODAY}. Search the web for:
 
 1. UPCOMING PREMIUM EVENTS in next 2-4 weeks (F1, tennis, fashion, art, film)
 2. BUSINESS CLASS AIRLINE NEWS this week (new cabins, lounges, routes, awards)
 3. TRENDING LUXURY DESTINATIONS right now
 
+CRITICAL DATE RULE:
+Every item MUST be from the last 4 weeks ({cutoff_past.strftime("%B %d")} - {now.strftime("%B %d, %Y")}).
+If you cannot find news from the last 4 weeks, say so — DO NOT return old articles from 2024 or 2025.
+For events: must be happening in the NEXT 4 weeks ({now.strftime("%B %d")} - {future_end.strftime("%B %d, %Y")}).
+Include the EXACT article date or event date for each item.
+I will REJECT any item older than 4 weeks.
+
 Per item return:
-{{"type":"event|news|destination","name":"...","city":"...","dates":"...","details":"3-4 specific fact sentences","youtube_query":"best YouTube search for footage of this","visual":"what this looks like visually"}}
+{{"type":"event|news|destination","name":"...","city":"...","dates":"exact event or article date range","article_date":"YYYY-MM-DD if news","details":"3-4 specific fact sentences","youtube_query":"best YouTube search for footage of this","visual":"what this looks like visually"}}
 
 IMPORTANT — YOUTUBE QUERIES:
 For each item, write a youtube_query that finds LUXURY/VIP/PREMIUM footage.
@@ -127,6 +138,17 @@ Return JSON array, 6-8 items. Only REAL facts from web. No markdown fences."""
         ),
     )
     items = _parse_json_array(resp.text or "")
+
+    filtered: list[dict] = []
+    for item in items:
+        dates = item.get("dates", "") + item.get("date_range", "") + item.get("article_date", "")
+        if any(y in dates for y in ("2024", "2023", "2022")):
+            print(f"  ❌ VECHI: {item.get('name', '?')} ({dates})")
+            continue
+        filtered.append(item)
+
+    items = filtered if filtered else items
+    print(f"  ✅ {len(items)} items after date filter\n")
 
     for i, it in enumerate(items, 1):
         print(f"  {i}. [{it.get('type', '?'):11s}] {it.get('name', '')}")
@@ -152,6 +174,10 @@ def step2_select(claude_client: anthropic.Anthropic, findings: list[dict]) -> li
 {json.dumps(findings, ensure_ascii=False)}
 
 Select 3 BEST for our WhatsApp Channel.
+
+REJECT any item where the date is older than 4 weeks.
+If an item has no date or the date is from 2024/2025, REJECT it.
+Only select items from the last 4 weeks or upcoming events in the next 4 weeks.
 
 REMEMBER THE BRAND:
 - We sell the LUXURY EXPERIENCE around events, not the event action
