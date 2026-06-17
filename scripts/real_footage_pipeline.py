@@ -141,7 +141,11 @@ Return JSON array, 6-8 items. Only REAL facts from web. No markdown fences."""
 
     filtered: list[dict] = []
     for item in items:
-        dates = item.get("dates", "") + item.get("date_range", "") + item.get("article_date", "")
+        dates = (
+            (item.get("dates") or "")
+            + (item.get("date_range") or "")
+            + (item.get("article_date") or "")
+        )
         if any(y in dates for y in ("2024", "2023", "2022")):
             print(f"  ❌ VECHI: {item.get('name', '?')} ({dates})")
             continue
