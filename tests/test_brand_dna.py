@@ -22,6 +22,12 @@ def test_brand_dna_copyright_rules():
     assert "Visible logos" in BBC_BRAND_DNA
 
 
+def test_brand_dna_video_quality():
+    assert "OFFICIAL BRAND CHANNELS" in BBC_BRAND_DNA
+    assert "TV commercial" in BBC_BRAND_DNA
+    assert "TRAVEL VLOGGERS" in BBC_BRAND_DNA
+
+
 def test_content_selection_filter():
     assert "ASPIRATIONAL" in BBC_CONTENT_SELECTION_CONTEXT
     assert "Accidents" in BBC_CONTENT_SELECTION_CONTEXT

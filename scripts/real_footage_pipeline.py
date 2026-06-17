@@ -159,18 +159,25 @@ REMEMBER THE BRAND:
 - We want our client to feel INSPIRED, not thrilled by danger
 - Mix: 1 event + 1 airline news + 1 destination
 
-For each, write a SPECIFIC youtube_query for YouTube search:
-- Include BRAND NAMES when relevant (Qatar Airways, Emirates, Air France, Dior)
-- Include YEAR (2025 or 2026) for events
-- Include SPECIFIC LOCATION (Bellagio for Lake Como, Monte Carlo for Monaco)
-- Include one of: cinematic, drone, aerial, 4K, tour, experience, review
-- Good: "Qatar Airways Qsuite cabin tour 2026 review"
-- Good: "Lake Como Bellagio Villa luxury drone aerial 4K"
-- Good: "Paris Haute Couture Dior runway front row 2026"
-- Bad: "Lake Como luxury villa" (too vague — YouTube returns irrelevant results)
+For each pick, write TWO YouTube search queries:
+
+"youtube_query_official": Search that finds OFFICIAL brand/airline promo videos.
+  Include the brand/airline name + "official" + "reveal" or "promo" or "commercial"
+  Example: "Qatar Airways Qsuite Next Gen official reveal"
+  Example: "Emirates new First Class Suite official launch 2026"
+  Example: "F1 Monaco Grand Prix official promo cinematic"
+
+"youtube_query_cinematic": Fallback search for drone/cinematic footage.
+  Include destination + "4K" + "cinematic" + "drone" or "aerial"
+  Example: "Monaco harbor sunset drone 4K cinematic aerial"
+  Example: "Tokyo skyline night cinematic 4K"
+  Example: "Lake Como Bellagio aerial drone luxury 4K"
+
+CRITICAL: Query A (official) is ALWAYS tried first.
+Only if it fails, query B (cinematic) is used.
 
 Per pick return:
-{{"index":0,"headline":"Emotional max 8 words","youtube_query":"specific YouTube search query","caption":"Full WhatsApp caption. Emoji start. Premium whisper tone. End with:\\n\\nbuybusinessclass.com\\n☎️ +1 888-322-7999 📩 deals@buybusinessclass.com","post_type":"deal|news"}}
+{{"index":0,"headline":"Emotional max 8 words","youtube_query_official":"brand official promo search","youtube_query_cinematic":"destination 4K cinematic drone search","caption":"Full WhatsApp caption. Emoji start. Premium whisper tone. End with:\\n\\nbuybusinessclass.com\\n☎️ +1 888-322-7999 📩 deals@buybusinessclass.com","post_type":"deal|news"}}
 
 JSON array, exactly 3. No markdown.""",
             }
@@ -184,8 +191,15 @@ JSON array, exactly 3. No markdown.""",
         item["headline"] = p["headline"]
         item["caption"] = p["caption"]
         item["post_type"] = p.get("post_type", "news")
-        if p.get("youtube_query"):
-            item["youtube_query"] = p["youtube_query"]
+        legacy_q = p.get("youtube_query", item.get("youtube_query", ""))
+        item["youtube_query_official"] = p.get(
+            "youtube_query_official",
+            f"{legacy_q} official promo luxury".strip() if legacy_q else f"{item['name']} official promo luxury",
+        )
+        item["youtube_query_cinematic"] = p.get(
+            "youtube_query_cinematic",
+            f"{legacy_q} 4K cinematic drone aerial".strip() if legacy_q else f"{item['name']} cinematic 4K drone aerial",
+        )
         selected.append(item)
         print(f"  ✅ {item['headline']}")
 
@@ -196,59 +210,68 @@ JSON array, exactly 3. No markdown.""",
 
 
 def step3_footage(claude_client: anthropic.Anthropic, selected: list[dict]) -> None:
-    """Download YouTube footage with smart retry + fallback chain."""
-    print("\n📹 STEP 3 — YouTube download + frame extraction...\n")
+    """Download YouTube footage — official brand videos first, cinematic fallback."""
+    print("\n📹 STEP 3 — YouTube: official first, cinematic fallback...\n")
 
     yt_context = BBC_YOUTUBE_SEARCH_CONTEXT
 
     for i, item in enumerate(selected, 1):
         name = item.get("name", "")
-        city = item.get("city", "")
-        primary_q = item.get("youtube_query", f"{name} luxury VIP experience")
+        legacy_q = item.get("youtube_query", "")
 
         queries = [
-            primary_q,
-            f"{name} {city} cinematic 4K drone aerial luxury".strip(),
-            f"{city} luxury travel cinematic aerial sunset 4K".strip()
-            if city
-            else f"{name} premium experience cinematic",
+            item.get(
+                "youtube_query_official",
+                f"{legacy_q} official promo luxury".strip() if legacy_q else f"{name} official promo luxury",
+            ),
+            item.get(
+                "youtube_query_cinematic",
+                f"{legacy_q} 4K cinematic drone aerial".strip() if legacy_q else f"{name} cinematic 4K drone aerial",
+            ),
         ]
-        queries = list(dict.fromkeys(q for q in queries if q))
 
         print(f"  {i}. {item.get('headline', name)}")
         chosen_video: dict | None = None
-        needs_frame_check = False
-        videos: list[dict] = []
 
         for attempt, q in enumerate(queries, 1):
-            print(f"     🔍 Attempt {attempt}: '{q[:55]}'")
+            label = "OFFICIAL" if attempt == 1 else "CINEMATIC"
+            print(f"     🔍 {label}: '{q[:55]}'")
 
             videos = search_youtube(q, max_results=3)
             if not videos:
                 print("        ⚠️ No results")
                 continue
 
-            titles = "\n".join(
-                f"  {j}. {v['title']} ({v['duration']}s, {v.get('uploader', '')})"
+            video_info = "\n".join(
+                f"  {j}. \"{v['title']}\"\n"
+                f"     Uploader: {v.get('uploader', 'unknown')}\n"
+                f"     Views: {v.get('view_count', 0):,} | Duration: {v['duration']}s"
                 for j, v in enumerate(videos)
             )
 
             try:
                 pick = claude_client.messages.create(
                     model=getattr(settings, "anthropic_model", "claude-sonnet-4-20250514"),
-                    max_tokens=100,
+                    max_tokens=150,
                     system=yt_context,
                     messages=[
                         {
                             "role": "user",
-                            "content": f"""Best video for luxury post about "{name}"?
+                            "content": f"""Pick the best YouTube video for a BuyBusinessClass.com post about "{name}".
 
-{titles}
+{video_info}
 
-Reply JUST the number (0/1/2).
-Only reply "NONE" if videos show crashes, accidents, violence, or explicit negativity.
-Travel vlogs, drone footage, cinematic city tours are ACCEPTABLE even if not perfectly luxury.
-We prefer REAL footage over nothing.""",
+EVALUATION:
+- Uploader is airline/brand/official channel? → STRONG preference
+- Uploader is known premium creator (Sam Chui, The Points Guy)? → OK
+- Title has "official", "reveal", "launch", "commercial"? → bonus
+- Duration 1-5 min (promo) preferred over 10-30 min (vlog)
+- Title has "MY", "I TRIED", "OMG", "HONEST REVIEW"? → REJECT
+- Shaky/amateur implied by title? → REJECT
+
+Reply with JUST the number (0, 1, or 2).
+Reply "NONE" ONLY if ALL are amateur vlogger content.
+Prefer official brand content even if view count is lower.""",
                         }
                     ],
                 )
@@ -262,23 +285,19 @@ We prefer REAL footage over nothing.""",
                             break
                     idx = min(idx, len(videos) - 1)
                     chosen_video = videos[idx]
-                    needs_frame_check = False
-                    print(f"        ✅ Claude picked: {chosen_video['title'][:50]}")
+                    print(
+                        f"        ✅ Claude: \"{chosen_video['title'][:45]}\" "
+                        f"by {chosen_video.get('uploader', '?')}"
+                    )
                     break
-                print("        🚫 Claude: none suitable")
+                print(f"        🚫 Claude: none suitable for {label}")
             except Exception as exc:
                 chosen_video = videos[0]
-                needs_frame_check = False
-                print(f"        ⚠️ Claude error ({exc}) — using first result")
+                print(f"        ⚠️ Claude error ({exc}) — using first: {chosen_video['title'][:45]}")
                 break
 
-        if not chosen_video and videos:
-            print("     📥 All queries rejected — downloading first result for frame check...")
-            chosen_video = videos[0]
-            needs_frame_check = True
-
         if not chosen_video:
-            print("     ⬜ No YouTube video found at all")
+            print("     ⬜ No video found — AI image only")
             continue
 
         clip = download_clip(chosen_video["url"], str(OUT / f"raw_{i}.mp4"), max_seconds=30)
@@ -291,32 +310,30 @@ We prefer REAL footage over nothing.""",
 
         frames = extract_frames(clip, str(OUT / f"frames_{i}"), interval_sec=3, skip_start=5)
         if not frames:
-            print("     ⚠️ No frames extracted")
+            print("     ⚠️ No frames")
             continue
 
-        if needs_frame_check:
-            best = select_best_frame_with_claude(
-                frames,
-                event_name=name,
-                anthropic_client=claude_client,
-                model=getattr(settings, "anthropic_model", "claude-sonnet-4-20250514"),
-            )
-            if best is None:
-                print("     🚫 Claude rejected ALL frames (logos/watermarks/bad content)")
-                continue
-            item["best_frame"] = best
-            item["frames"] = frames
-            print(f"     ✅ Claude approved frame: {Path(best).name}")
-        else:
+        best = select_best_frame_with_claude(
+            frames,
+            event_name=name,
+            anthropic_client=claude_client,
+            model=getattr(settings, "anthropic_model", "claude-sonnet-4-20250514"),
+        )
+        if not best:
             best = select_best_frame(frames)
+
+        if best:
             item["frames"] = frames
             item["best_frame"] = best
-            print(f"     ✅ {len(frames)} frames → best: {Path(best).name}")
+            print(f"     ✅ Frame approved: {Path(best).name}")
+        else:
+            print("     🚫 All frames rejected (logos/quality)")
+            continue
 
         trimmed = trim_video(clip, str(OUT / f"clip_{i}.mp4"), start=5, duration=10)
         if trimmed:
             item["video_clip"] = trimmed
-            print(f"     ✅ Clip 10s: {Path(trimmed).stat().st_size // 1024}KB")
+            print(f"     ✅ Clip: {Path(trimmed).stat().st_size // 1024}KB")
 
 
 async def step4_brand(selected: list[dict]) -> None:

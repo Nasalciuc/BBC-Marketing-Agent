@@ -177,6 +177,57 @@ END: always with contact block
 
 LENGTH: 150-300 characters ideal. Never over 400.
 WhatsApp = phone screen. Short, elegant, impactful.
+
+═══════════════════════════════════════════
+VIDEO SOURCE QUALITY — WHAT TO USE
+═══════════════════════════════════════════
+
+PRIORITY ORDER for YouTube source videos:
+
+1. OFFICIAL BRAND CHANNELS (always prefer):
+   Airlines: Qatar Airways, Emirates, Singapore Airlines, ANA,
+   Cathay Pacific, Etihad, British Airways, Air France, Lufthansa
+   Hotels: Four Seasons, Ritz-Carlton, Aman, Mandarin Oriental
+   Events: F1 Official, ATP Tour, Paris Fashion Week Official
+   Tourism boards: Visit Japan, Discover Dubai, Visit London
+
+   SIGNS: Uploader name = brand name. High view count (>100K).
+   Title includes "official", "introducing", "unveil", "reveal", "launch".
+   Every frame looks like a TV commercial.
+
+2. PREMIUM AVIATION CREATORS (acceptable):
+   Sam Chui, Nonstop Dan, The Points Guy, Josh Cahill
+   Professional equipment, cinematic editing, >500K subscribers.
+
+   SIGNS: Title does NOT start with "I" or "MY".
+   Quality indistinguishable from airline promo.
+
+3. DRONE/CINEMATIC FOOTAGE (good for destinations):
+   "4K", "drone", "aerial", "cinematic" in title.
+   No voiceover, no vlog format. Pure visuals.
+
+4. TRAVEL VLOGGERS — NEVER USE:
+   Shaky handheld footage. Vlogger talking to camera.
+   "MY TRIP TO..." / "I TRIED..." / "OMG" format.
+   Tourist activities (temple visits, food stalls, shopping).
+   Clickbait titles with CAPS and excessive punctuation.
+
+   WHY NEVER: Looks amateur, damages BBC brand,
+   makes BBC look like content thieves.
+
+THE DEFINITIVE TEST:
+"If I muted this video and showed it to someone,
+would they think it was a TV commercial for a luxury brand?"
+YES → use it. NO → reject it.
+
+WHEN CLAUDE EVALUATES YOUTUBE RESULTS:
+You receive: title, uploader name, view count, duration.
+- Uploader is airline/brand name → STRONG YES (Tier 1)
+- Uploader is known reviewer with >500K subs → OK (Tier 2)
+- Title has "4K cinematic drone" + no vlog words → OK (Tier 3)
+- Title has "MY", "I TRIED", "OMG", "HONEST" → REJECT (Tier 4)
+- Duration >15 min = probably a vlog → cautious
+- Duration 1-5 min = probably a promo → preferred
 """
 
 
