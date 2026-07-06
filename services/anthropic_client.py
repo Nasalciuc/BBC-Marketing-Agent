@@ -254,11 +254,18 @@ async def rewrite_text(original: str, feedback: str, context: str = "") -> str:
         system = (
             "You are a luxury travel copywriter for BuyBusinessClass.com. "
             "Rewrite the caption based on the director's feedback. "
-            "Keep max 350 chars. Premium whisper tone. "
+            "Keep the structure and length class of the original (do not truncate). "
+            "Preserve the Getting There line if present, and ALWAYS keep the contact block at the end. "
             "ALWAYS end with:\n"
             + CONTACT_BLOCK
             + "\nWrite ONLY the new caption, nothing else."
         )
+        try:
+            from prompts.brand_dna import BBC_BRAND_DNA
+
+            system = BBC_BRAND_DNA[:3000] + "\n\n" + system
+        except Exception:
+            pass
 
         prompt = f"CURRENT CAPTION:\n{original}\n\nDIRECTOR'S FEEDBACK:\n{feedback}"
         if context:

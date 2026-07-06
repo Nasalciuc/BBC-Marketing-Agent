@@ -170,6 +170,21 @@ async def edit_message_reply_markup(
         return None
 
 
+def approval_caption(event: dict) -> str:
+    """Postarea REALĂ (senior SMM text) pentru approval — nu metadata card.
+
+    Telegram photo caption limit = 1024 chars. Fallback pe metadata preview
+    doar pentru deal-urile vechi care nu au caption.
+    """
+    real_caption = event.get("whatsapp_caption") or event.get("caption") or ""
+    campaign_line = f"\n\n📋 {event.get('campaign_id', '')}"
+    if real_caption:
+        if len(real_caption) + len(campaign_line) > 1024:
+            return real_caption[: 1024 - len(campaign_line) - 4] + "…" + campaign_line
+        return real_caption + campaign_line
+    return format_telegram_preview(event)
+
+
 async def send_approval_request(
     event: dict, chat_id: str | int | None = None
 ) -> dict | None:
@@ -177,7 +192,7 @@ async def send_approval_request(
     from keyboards import review_keyboard
 
     campaign_id = event.get("campaign_id", "unknown")
-    caption = format_telegram_preview(event)
+    caption = approval_caption(event)
     keyboard = review_keyboard(campaign_id)
     target_chat = chat_id or settings.telegram_chat_id
 

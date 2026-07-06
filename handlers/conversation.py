@@ -167,6 +167,21 @@ async def handle_ai_message(chat_id: int, user_id: int, text: str):
                         sb.table("campaigns").update({"whatsapp_caption": new_caption}).eq(
                             "campaign_id", campaign_id
                         ).execute()
+
+                        # Re-trimite postarea actualizată CU butoane pt re-aprobare
+                        try:
+                            r2 = sb.table("campaigns").select("*").eq("campaign_id", campaign_id).execute()
+                            if r2.data:
+                                camp = r2.data[0]
+                                camp["whatsapp_caption"] = new_caption
+                                from services.supabase_client import update_review_tracking
+                                from services.telegram_client import send_approval_request
+
+                                res = await send_approval_request(camp, chat_id=chat_id)
+                                if res and res.get("message_id"):
+                                    await update_review_tracking(campaign_id, res["chat_id"], res["message_id"])
+                        except Exception as e:
+                            log.warning("Re-approval send failed: %s", e)
                     except Exception:
                         pass
                 else:

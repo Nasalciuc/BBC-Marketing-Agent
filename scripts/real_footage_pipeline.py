@@ -567,7 +567,7 @@ async def step5_telegram(selected: list[dict]) -> None:
             import httpx
 
             from keyboards import review_keyboard
-            from prompts.system_prompts import format_telegram_preview
+            from services.telegram_client import approval_caption
 
             tg_url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendPhoto"
             async with httpx.AsyncClient(timeout=60) as client:
@@ -575,7 +575,7 @@ async def step5_telegram(selected: list[dict]) -> None:
                     tg_url,
                     data={
                         "chat_id": str(cid),
-                        "caption": format_telegram_preview(campaign),
+                        "caption": approval_caption(campaign),
                         "parse_mode": "Markdown",
                         "reply_markup": json.dumps(review_keyboard(campaign_id)),
                     },
