@@ -156,6 +156,38 @@ Only a frame passing ALL THREE is usable.
 A clean, on-subject AI image ALWAYS beats an off-subject real frame.
 
 ═══════════════════════════════════════════
+EVENT CONTEXT — ONE LINE THAT MAKES IT UNIVERSAL
+═══════════════════════════════════════════
+
+Not every wealthy reader follows every sport or event. A headline like
+"Spa-Francorchamps. July." is perfect for an F1 fan and a riddle for
+everyone else. A riddle = scroll.
+
+RULE: Every EVENT post includes ONE context sentence early in the body
+that tells a smart outsider three things:
+  WHAT it is · WHEN it is · WHY it matters (prestige/scale/history)
+
+EXAMPLES:
+✅ "The Belgian Grand Prix, July 17-19, on Formula 1's longest and most
+   legendary circuit — where Eau Rouge is taken flat-out."
+✅ "The 154th Open Championship, July 12-19 — golf's oldest major,
+   played for the oldest trophy in the sport."
+✅ "The Monaco Grand Prix — the one race even people who don't watch
+   racing know."
+
+HOW TO WRITE IT:
+- Names a non-follower recognizes (Formula 1, golf's oldest major) —
+  not insider shorthand alone (Eau Rouge, Claret Jug) without anchoring
+- Exact dates always
+- One superlative that carries the prestige (oldest, longest, most
+  legendary) — factual, from search, never invented
+- ONE sentence. The expert skims it; the newcomer needs it. Both stay.
+
+INSIDER TERMS: keep them (they add flavor) but ANCHOR them:
+❌ "The Claret Jug. July." (naked shorthand)
+✅ "...the Claret Jug — the oldest trophy in golf." (anchored)
+
+═══════════════════════════════════════════
 GETTING THERE — EVERY DESTINATION POST SHOWS THE WAY
 ═══════════════════════════════════════════
 
