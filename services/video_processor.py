@@ -115,20 +115,26 @@ def select_best_frame_with_claude(
     images_content.append(
         {
             "type": "text",
-            "text": f"""These are frames extracted from a YouTube video about "{event_name}".
-I need ONE frame for a BuyBusinessClass.com branded post.
+            "text": f"""These frames are from a YouTube video for a BuyBusinessClass.com post about: "{event_name}".
 
-CHECK EACH FRAME:
-- Does it have visible LOGOS from other companies? (TV channels, sponsors)
-- Does it have WATERMARKS or BANNERS? (subscribe buttons, app ads, tickers)
-- Does it have BROADCAST OVERLAYS? (scores, timers, news chyrons)
-- Is it VISUALLY APPEALING for a luxury travel brand?
+CHECK EACH FRAME — three tests, ALL must pass:
+
+TEST 1 — SUBJECT MATCH (most important):
+Does the frame CLEARLY SHOW the subject "{event_name}"?
+- Post about a resort → must show pools/villas/designed luxury, NOT ruins or random landscape
+- Post about a lounge/cabin → must show THE interior, NOT ad campaign footage or people holding signs
+- Post about a destination → must show the ICONIC recognizable view
+A stranger seeing the frame alone must understand what we sell.
+
+TEST 2 — LUXURY LOOK:
+Cinematic, aspirational, premium. Not amateur, not confusing, not ugly.
+
+TEST 3 — CLEAN:
+No third-party logos, watermarks, banners, ad graphics, text overlays.
 
 REPLY with EXACTLY one of:
-- "BEST: 0" (or 1, 2, 3, 4) — the number of the cleanest, most beautiful frame
-- "NONE" — if ALL frames have logos/watermarks/overlays and none are usable
-
-Pick the frame that is CLEAN and BEAUTIFUL. No logos. No watermarks.""",
+- "BEST: 0" (or 1, 2, 3, 4) — the frame passing ALL THREE tests
+- "NONE" — if no frame passes all three (off-subject frames = NONE even if clean and pretty)""",
         }
     )
 

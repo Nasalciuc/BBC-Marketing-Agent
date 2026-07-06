@@ -39,6 +39,28 @@ async def handle_ai_message(chat_id: int, user_id: int, text: str):
         await send_message(chat_id=chat_id, text=response_text)
         await add_message(chat_id, "assistant", response_text)
 
+    if intent == "GENERATE_CONTENT":
+        from services.telegram_client import send_message as _sm
+
+        await _sm(
+            chat_id=chat_id,
+            text="🤖 *Generating this week's content...*\n\nSearching the web — takes 2-3 minutes. Each post arrives with Approve/Reject buttons.",
+        )
+        import asyncio as _asyncio
+
+        from scripts.autonomous_agent import run_autonomous
+
+        _asyncio.create_task(run_autonomous(count=5))
+        return
+
+    if intent == "ANALYZE":
+        import asyncio as _asyncio
+
+        from services.reasoning_agent import run_reasoning_loop
+
+        _asyncio.create_task(run_reasoning_loop(text, chat_id))
+        return
+
     if intent == "CREATE_DEAL":
         event_name = entities.get("event_name") or text
         from_iata = entities.get("from_iata") or "JFK"

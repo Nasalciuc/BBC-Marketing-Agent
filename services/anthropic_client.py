@@ -41,6 +41,8 @@ UNDERSTAND the director's intent. They may say things like:
 - "anulează", "cancel" → CANCEL
 - "bună", "hello", "hi" → GREETING
 - "help", "ajutor", "cum funcționează" → HELP
+- "generează postări", "genereaza continut", "fa postari noi", "generate content", "rulează pipeline", "weekly content" → GENERATE_CONTENT
+- "de ce postările cu X merg prost", "compară luna asta cu...", "analizează performanța", "câte campanii avem", "care e cel mai bun...", "ce face concurența", "why are X posts failing", "compare this month" → ANALYZE
 
 RULES:
 - If state is "idle" and message looks like a destination/event → CREATE_DEAL
@@ -53,7 +55,7 @@ RULES:
 - Use 1-2 emoji max in response
 
 Return ONLY valid JSON, no markdown:
-{{"intent": "CREATE_DEAL|MODIFY_DEAL|APPROVE|REJECT|POST_NOW|SCHEDULE|STATUS|LIST_DEALS|HELP|GREETING|EDIT_CAPTION|REGENERATE|CAPTION_UPDATE|CANCEL|UNCLEAR", "entities": {{"event_name": null, "from_iata": null, "to_iata": null, "changes": [], "new_caption": null}}, "response": "Short message to director", "needs_clarification": false, "confidence": 0.95}}"""
+{{"intent": "CREATE_DEAL|MODIFY_DEAL|APPROVE|REJECT|POST_NOW|SCHEDULE|STATUS|LIST_DEALS|HELP|GREETING|EDIT_CAPTION|REGENERATE|CAPTION_UPDATE|CANCEL|GENERATE_CONTENT|ANALYZE|UNCLEAR", "entities": {{"event_name": null, "from_iata": null, "to_iata": null, "changes": [], "new_caption": null}}, "response": "Short message to director", "needs_clarification": false, "confidence": 0.95}}"""
 
 
 def _get_client():

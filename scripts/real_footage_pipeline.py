@@ -465,7 +465,9 @@ async def step4_brand(selected: list[dict]) -> None:
         price = ""
         city = item.get("city", "")
         if item.get("post_type") == "deal" and city:
-            iata = CITY_IATA.get(city.lower().split(",")[0].strip(), "")
+            iata = item.get("pricing_iata") or CITY_IATA.get(
+                city.lower().split(",")[0].strip(), ""
+            )
             if iata:
                 p = calculate_price("JFK", iata, "round_trip", "business")
                 if p:
@@ -498,88 +500,123 @@ async def step4_brand(selected: list[dict]) -> None:
 
 
 async def step5_telegram(selected: list[dict]) -> None:
-    print("\n📱 STEP 5 — Telegram...\n")
+    """Save campaigns to Supabase + send with Approve/Reject buttons."""
+    print("\n📱 STEP 5 — Save + send for approval...\n")
 
-    import httpx
+    from datetime import UTC
 
-    from services.telegram_client import send_message, send_photo, send_video
+    from services.supabase_client import save_campaign, update_review_tracking, upload_image
+    from services.telegram_client import send_approval_request, send_message, send_video
 
     cid = settings.telegram_chat_id
     if not cid:
-        print("⬜ No TELEGRAM_CHAT_ID — files saved locally")
+        print("⬜ No TELEGRAM_CHAT_ID — saved locally only")
         return
+
+    campaign_base = datetime.now(UTC).strftime("%Y-W%W")
 
     await send_message(
         chat_id=cid,
         text=(
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📰 *This Week — Business Class*\n"
-            f"_{TODAY}_\n"
-            f"━━━━━━━━━━━━━━━━━━━━━"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "📰 *This Week — Business Class*\n"
+            "_Review each post below_ 👇\n"
+            "━━━━━━━━━━━━━━━━━━━━━"
         ),
     )
 
     for i, item in enumerate(selected, 1):
         await asyncio.sleep(1)
 
-        src = "📸 Real" if item.get("best_frame") else "🎨 AI"
-        img = item.get("image")
+        campaign_id = f"{campaign_base}-RF-{i:03d}"
 
-        if img and Path(img).exists():
-            img_bytes = Path(img).read_bytes()
-            url = None
-            if settings.supabase_url and settings.supabase_key:
-                try:
-                    from services.supabase_client import upload_image
+        img_path = item.get("image", str(OUT / f"post_{i}.jpg"))
+        image_url = None
+        if Path(img_path).exists():
+            img_bytes = Path(img_path).read_bytes()
+            try:
+                image_url = await upload_image(img_bytes, f"deals/{campaign_id}/landscape.jpg")
+            except Exception as e:
+                print(f"  ⚠️ Upload failed: {e}")
 
-                    url = await upload_image(img_bytes, f"deals/pipeline/post_{i}.jpg")
-                except Exception as exc:
-                    log.warning("Supabase upload failed: %s", exc)
+        caption = ""
+        cap_file = OUT / f"caption_{i}.txt"
+        if cap_file.exists():
+            caption = cap_file.read_text(encoding="utf-8")
 
-            if url:
-                await send_photo(chat_id=cid, photo_url=url, caption=f"*{item['headline']}*\n{src}")
-            elif settings.telegram_bot_token:
-                tg_url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendPhoto"
-                async with httpx.AsyncClient(timeout=60) as client:
-                    await client.post(
-                        tg_url,
-                        data={
-                            "chat_id": str(cid),
-                            "caption": f"*{item['headline']}*\n{src}",
-                            "parse_mode": "Markdown",
-                        },
-                        files={"photo": (Path(img).name, img_bytes, "image/jpeg")},
-                    )
-            else:
-                await send_message(chat_id=cid, text=f"*{item['headline']}*\n{src}")
+        campaign = {
+            "campaign_id": campaign_id,
+            "name": item.get("name", item.get("headline", "")),
+            "event_name": item.get("headline", ""),
+            "city": item.get("city", ""),
+            "category": item.get("type", "news"),
+            "route_str": item.get("headline", ""),
+            "price": item.get("price_display", ""),
+            "price_raw": item.get("price_raw"),
+            "image_url": image_url,
+            "caption": caption,
+            "whatsapp_caption": caption,
+            "event_context": item.get("details", ""),
+            "status": "draft",
+        }
 
+        await save_campaign(campaign)
+
+        if image_url is None and Path(img_path).exists() and settings.telegram_bot_token:
+            # Supabase absent (local run) → multipart upload direct, cu butoanele de review
+            import httpx
+
+            from keyboards import review_keyboard
+            from prompts.system_prompts import format_telegram_preview
+
+            tg_url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendPhoto"
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    tg_url,
+                    data={
+                        "chat_id": str(cid),
+                        "caption": format_telegram_preview(campaign),
+                        "parse_mode": "Markdown",
+                        "reply_markup": json.dumps(review_keyboard(campaign_id)),
+                    },
+                    files={"photo": (Path(img_path).name, Path(img_path).read_bytes(), "image/jpeg")},
+                )
+                data = resp.json() if resp.status_code == 200 else {}
+            result = {
+                "chat_id": cid,
+                "message_id": (data.get("result") or {}).get("message_id"),
+            }
+        else:
+            result = await send_approval_request(campaign, chat_id=cid)
+
+        if result and result.get("message_id"):
+            await update_review_tracking(campaign_id, result["chat_id"], result["message_id"])
+            print(f"  ✅ Post {i} sent for approval: {campaign_id}")
+        else:
+            print(f"  ⚠️ Post {i}: no message_id returned — check send_approval_request")
+
+        # Video separat (butoanele stau pe poză); pe foto-run nu există
         await asyncio.sleep(0.5)
-
         vid = item.get("video")
         if vid and Path(vid).exists():
             await send_video(
                 chat_id=cid,
                 video_path=vid,
-                caption=f"🎬 *{item.get('name', item['headline'])}*",
+                caption=f"🎬 *Video: {item.get('headline', '')}*\n_(for the post above)_",
             )
-
-        await asyncio.sleep(0.5)
-
-        cap_file = OUT / f"caption_{i}.txt"
-        if cap_file.exists():
-            await send_message(chat_id=cid, text=f"📋 *Caption:*\n\n{cap_file.read_text(encoding='utf-8')}")
-        await asyncio.sleep(1)
 
     await send_message(
         chat_id=cid,
         text=(
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            "✅ *Pipeline complete*\n\n"
-            "🔍 Gemini → web search\n🧠 Claude → select & write\n"
-            "📹 yt-dlp → real footage\n🖼️ FFmpeg → frames\n"
-            "🎨 Branding → BBC overlay\n📱 Ready for Channel"
+            "✅ *All posts ready for review*\n\n"
+            "Tap *Approve* on the ones you like.\n"
+            "Approved posts broadcast Monday 10:00.\n\n"
+            "🔍 Gemini → web · 🧠 Claude → select\n"
+            "🎨 BBC branding · 📍 Getting There"
         ),
     )
+    print("\n✅ All posts saved + sent for approval!")
 
 
 async def main() -> None:
