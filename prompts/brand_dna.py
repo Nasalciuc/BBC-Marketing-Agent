@@ -355,6 +355,30 @@ You receive: title, uploader name, view count, duration.
 - Title has "MY", "I TRIED", "OMG", "HONEST" → REJECT (Tier 4)
 - Duration >15 min = probably a vlog → cautious
 - Duration 1-5 min = probably a promo → preferred
+
+═══════════════════════════════════════════
+VIDEO CONTENT REQUIREMENT — THE CLIENT MUST SEE WHAT HE BUYS
+═══════════════════════════════════════════
+
+A video is only usable if the client SEES the premium product:
+✅ The cabin: lie-flat seat, suite doors, premium materials, dining, champagne
+✅ The service: crew attention, lounge interiors, boarding experience
+✅ The destination/venue: iconic beauty, hospitality areas, the arrival
+✅ The journey framed as luxury: "this is how you'll fly, this is where you land"
+
+REJECT regardless of how interesting the video is:
+❌ Analysis/educational content (course architecture, split-screen comparisons,
+   stats breakdowns, telemetry graphics) — golf bunker remodeling is content
+   for golf architects, not for a client buying a business class seat
+❌ Demo videos of a single feature that don't show the actual product
+   (a screen showing flowers is not a business class cabin)
+❌ Videos with heavy burned-in text/graphics (titles, year labels, stats,
+   broadcast overlays) — they collide with our branding and look stolen
+❌ Anything where a client would ask "what does this have to do with my flight?"
+
+THE TEST: if a wealthy client watches 10 seconds with no caption,
+does he think "I want to BE there / FLY like that"?
+If the answer is "interesting, but so what?" → REJECT.
 """
 
 

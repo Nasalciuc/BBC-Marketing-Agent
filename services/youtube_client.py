@@ -76,7 +76,7 @@ def download_clip(
     url: str,
     output_path: str,
     max_seconds: int = 30,
-    max_height: int = 720,
+    max_height: int = 2160,
 ) -> str | None:
     """
     Download first max_seconds of a YouTube video.
@@ -91,7 +91,9 @@ def download_clip(
         ytdlp,
         url,
         "--format",
-        f"best[height<={max_height}]/best",
+        f"bestvideo[height<={max_height}]+bestaudio/best[height<={max_height}]/best",
+        "--merge-output-format",
+        "mp4",
         "--download-sections",
         f"*0-{max_seconds}",
         "--output",
@@ -103,13 +105,20 @@ def download_clip(
     ]
 
     try:
-        subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180, check=False)
 
         for f in sorted(out_dir.glob(f"{stem}.*")):
-            if f.is_file() and f.stat().st_size > 5000 and f.suffix in (".mp4", ".mkv", ".webm"):
+            if f.is_file() and f.stat().st_size > 5000 and f.suffix.lower() in (
+                ".mp4",
+                ".mkv",
+                ".webm",
+                ".mov",
+            ):
                 log.info("Downloaded: %s (%dKB)", f, f.stat().st_size // 1024)
                 return str(f)
 
+        if result.stderr:
+            log.warning("yt-dlp stderr: %s", result.stderr[:300])
         log.warning("yt-dlp ran but no output file found")
         return None
 

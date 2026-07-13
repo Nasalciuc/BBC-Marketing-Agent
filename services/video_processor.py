@@ -5,6 +5,7 @@ Extract frames, trim clips, add simple text overlay.
 from __future__ import annotations
 
 import logging
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -183,10 +184,10 @@ def trim_video(
         video_path,
         "-t",
         str(duration),
-        "-vf",
-        "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
         "-c:v",
         "libx264",
+        "-crf",
+        "18",
         "-preset",
         "fast",
         "-c:a",
@@ -247,6 +248,8 @@ def brand_video(
         vf,
         "-c:v",
         "libx264",
+        "-crf",
+        "18",
         "-preset",
         "fast",
         "-c:a",
@@ -266,4 +269,74 @@ def brand_video(
         return None
     except Exception as exc:
         log.error("Brand video error: %s", exc)
+        return None
+
+
+def concat_videos(clip_a: str, clip_b: str, output_path: str, target_height: int = 1080) -> str | None:
+    """Concatenate two clips (cabin intro + destination) into one video.
+    Normalizes both to same resolution, CRF 18."""
+    ffmpeg = _get_ffmpeg()
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    vf = (
+        f"[0:v]scale=-2:{target_height},setsar=1,fps=25[v0];"
+        f"[1:v]scale=-2:{target_height},setsar=1,fps=25[v1];"
+        f"[v0][v1]concat=n=2:v=1:a=0[outv]"
+    )
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-i",
+        clip_a,
+        "-i",
+        clip_b,
+        "-filter_complex",
+        vf,
+        "-map",
+        "[outv]",
+        "-c:v",
+        "libx264",
+        "-crf",
+        "18",
+        "-preset",
+        "fast",
+        "-movflags",
+        "+faststart",
+        output_path,
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+        p = Path(output_path)
+        if p.exists() and p.stat().st_size > 5000:
+            log.info("Concat: %s (%dKB)", p.name, p.stat().st_size // 1024)
+            return output_path
+        return None
+    except Exception as exc:
+        log.error("Concat error: %s", exc)
+        return None
+
+
+def probe_video_stream(path: str) -> dict | None:
+    """Return width, height, bit_rate via ffprobe."""
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    cmd = [
+        ffprobe,
+        "-v",
+        "quiet",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height,bit_rate",
+        "-of",
+        "json",
+        path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+        data = json.loads(result.stdout or "{}")
+        streams = data.get("streams") or []
+        return streams[0] if streams else None
+    except Exception as exc:
+        log.warning("ffprobe failed for %s: %s", path, exc)
         return None

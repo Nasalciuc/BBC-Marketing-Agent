@@ -31,7 +31,8 @@ from scripts.real_footage_pipeline import (  # noqa: E402
 )
 from services.supabase_client import save_campaign, update_review_tracking  # noqa: E402
 from services.telegram_client import send_approval_request, send_message  # noqa: E402
-from services.video_processor import brand_video, trim_video  # noqa: E402
+from services.video_processor import brand_video, concat_videos, probe_video_stream, trim_video  # noqa: E402
+from services.gemini_client import analyze_youtube_video  # noqa: E402
 from services.youtube_client import download_clip, search_youtube  # noqa: E402
 
 TODAY = datetime.now(UTC).strftime("%B %d, %Y")
@@ -211,103 +212,127 @@ Return JSON array, exactly 5. "name" must match input exactly. No markdown.""",
 # ═══════════════════════════════════════
 
 def step3_download_videos(claude_client: anthropic.Anthropic, all_items: list[dict]) -> None:
-    print("\n📹 STEP 3 — YouTube: official channels first...\n")
+    """Candidates → Gemini WATCHES each → Claude verdict on full description →
+    download ONLY the winner, ONLY the clean segment, at 4K."""
+    print("\n📹 STEP 3 — Gemini watches, Claude decides, targeted download...\n")
 
-    yt_context = (
+    verdict_context = (
         brand_dna
-        + "\nPick OFFICIAL airline/brand/venue promo videos. REJECT vloggers, amateur footage."
+        + """
+You judge videos by their FULL content description (Gemini watched them).
+APPLY the VIDEO CONTENT REQUIREMENT: the client must SEE the premium product.
+REJECT: analysis/educational content, split-screens, stats graphics,
+feature demos without the product, heavy burned-in text, third-party logos."""
     )
 
     for i, item in enumerate(all_items, 1):
         queries = item.get("youtube_queries") or [item["name"] + " official promo luxury"]
         print(f"  {i}. {item.get('headline', item['name'])[:50]}")
 
-        chosen: dict | None = None
-        all_videos: list[dict] = []
+        candidates: list[dict] = []
+        for q in queries[:2]:
+            vids = search_youtube(q, max_results=3)
+            for v in vids:
+                if v["url"] not in [c["url"] for c in candidates]:
+                    candidates.append(v)
+        candidates.sort(key=lambda v: 0 if _is_official_channel(v.get("uploader", "")) else 1)
+        candidates = candidates[:3]
 
-        for q in queries:
-            print(f"     🔍 '{q[:50]}'")
-            videos = search_youtube(q, max_results=3)
-            if not videos:
-                continue
-            all_videos.extend(videos)
-
-            for v in videos:
-                if _is_official_channel(v.get("uploader", "")):
-                    chosen = v
-                    print(f"        🏆 AUTO-PICK: \"{v['title'][:45]}\" by {v['uploader']}")
-                    break
-
-            if chosen:
-                break
-
-            info = "\n".join(
-                f"  {j}. \"{v['title']}\" by {v.get('uploader', '?')} "
-                f"({v['duration']}s, {v.get('view_count', 0):,} views)"
-                for j, v in enumerate(videos)
-            )
-            try:
-                pick = claude_client.messages.create(
-                    model=MODEL,
-                    max_tokens=50,
-                    system=yt_context,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": (
-                                f'Best video for luxury post about "{item["name"]}"?\n\n'
-                                f'{info}\n\nReply JUST number (0/1/2). '
-                                'Only "NONE" if ALL are amateur vloggers.'
-                            ),
-                        }
-                    ],
-                )
-                raw = pick.content[0].text.strip()
-                cleaned = raw.split("\n")[0].split("—")[0].split("-")[0].strip()
-                if cleaned.upper() != "NONE":
-                    idx = None
-                    for ch in cleaned:
-                        if ch.isdigit():
-                            idx = int(ch)
-                            break
-                    if idx is not None:
-                        idx = min(idx, len(videos) - 1)
-                        chosen = videos[idx]
-                        print(f"        ✅ Claude: \"{chosen['title'][:45]}\"")
-                        break
-            except Exception as exc:
-                print(f"        ⚠️ Claude pick error: {exc}")
-
-        if not chosen and all_videos:
-            short = sorted(all_videos, key=lambda v: v.get("duration") or 999)
-            chosen = short[0]
-            print(f"     📥 Fallback: \"{chosen['title'][:45]}\"")
-
-        if not chosen:
-            print("     ⬜ No video found")
+        if not candidates:
+            print("     ⬜ No candidates")
             continue
 
-        clip = download_clip(chosen["url"], str(OUT / f"vid_raw_{i}.mp4"), max_seconds=30)
+        analyses: list[dict] = []
+        for c in candidates:
+            print(f"     👁️ Gemini watching: \"{c['title'][:45]}\" ({c.get('uploader', '?')})")
+            a = analyze_youtube_video(c["url"])
+            if a:
+                analyses.append({"candidate": c, "analysis": a})
+                print(f"        → {a.get('main_subject', '?')[:60]}")
+            else:
+                print("        ⚠️ analysis failed — skipping candidate")
+
+        if not analyses:
+            print("     ⬜ No analyzable videos — skipping video for this post")
+            continue
+
+        digest = "\n\n".join(
+            f"CANDIDATE {j}:\n"
+            f"Title: {x['candidate']['title']}\nUploader: {x['candidate'].get('uploader', '?')}\n"
+            f"Analysis: {json.dumps(x['analysis'], ensure_ascii=False)}"
+            for j, x in enumerate(analyses)
+        )
+        try:
+            v = claude_client.messages.create(
+                model=MODEL,
+                max_tokens=200,
+                system=verdict_context,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": f"""Post: "{item.get('headline', item['name'])}" (type: {item.get('type', '')}).
+
+Gemini watched these candidates:
+
+{digest}
+
+Pick the ONE where the client SEES the premium product, on-subject, clean segment available.
+Reply EXACTLY: {{"pick": 0, "start_s": 12, "end_s": 22}} using the candidate's best_clean_segment,
+or {{"pick": -1, "reason": "..."}} if none qualify.""",
+                    }
+                ],
+            )
+            vt = v.content[0].text.strip()
+            if vt.startswith("```"):
+                vt = vt.split("\n", 1)[1].rstrip("`").strip()
+            verdict = json.loads(vt)
+        except Exception as exc:
+            print(f"     ⚠️ Verdict parse failed: {exc} — using first analysis")
+            a0 = analyses[0]["analysis"].get("best_clean_segment") or {}
+            verdict = {"pick": 0, "start_s": a0.get("start_s", 5), "end_s": a0.get("end_s", 15)}
+
+        if verdict.get("pick", -1) < 0:
+            print(f"     🚫 Claude: {verdict.get('reason', 'none qualify')} — no video for this post")
+            continue
+
+        chosen = analyses[min(verdict["pick"], len(analyses) - 1)]["candidate"]
+        seg_start = max(0, int(verdict.get("start_s", 5)))
+        seg_end = int(verdict.get("end_s", seg_start + 10))
+        seg_len = max(6, min(12, seg_end - seg_start))
+        print(f"     ✅ WINNER: \"{chosen['title'][:45]}\" · segment {seg_start}-{seg_start + seg_len}s")
+
+        clip = download_clip(
+            chosen["url"],
+            str(OUT / f"vid_raw_{i}.mp4"),
+            max_seconds=seg_start + seg_len + 2,
+        )
         if not clip:
             print("     ⚠️ Download failed")
             continue
 
-        print(f"     ✅ Downloaded: {Path(clip).stat().st_size // 1024}KB")
+        trimmed = trim_video(clip, str(OUT / f"vid_clip_{i}.mp4"), start=seg_start, duration=seg_len)
+        if not trimmed:
+            continue
 
-        trimmed = trim_video(clip, str(OUT / f"vid_clip_{i}.mp4"), start=5, duration=10)
-        if trimmed:
-            item["video_clip"] = trimmed
-            print(f"     ✅ Clip: {Path(trimmed).stat().st_size // 1024}KB")
+        branded = brand_video(
+            trimmed,
+            str(OUT / f"vid_final_{i}.mp4"),
+            headline=item.get("headline", ""),
+            footer="buybusinessclass.com",
+        )
+        if not branded:
+            continue
 
-            branded = brand_video(
-                trimmed,
-                str(OUT / f"vid_final_{i}.mp4"),
-                headline=item.get("headline", ""),
-                footer="buybusinessclass.com",
-            )
-            if branded:
-                item["video_final"] = branded
-                print(f"     ✅ Branded: {Path(branded).stat().st_size // 1024}KB")
+        item["video_final"] = branded
+        print(f"     ✅ Final: {Path(branded).stat().st_size // 1024}KB")
+
+        if item.get("type") in ("event", "destination", "hotel"):
+            cabin = ROOT / "assets" / "cabin_clips" / "qsuite_intro.mp4"
+            if cabin.exists():
+                dual = concat_videos(str(cabin), branded, str(OUT / f"vid_dual_{i}.mp4"))
+                if dual:
+                    item["video_final"] = dual
+                    print(f"     ✅ DUAL (cabin+destination): {Path(dual).stat().st_size // 1024}KB")
 
 
 # ═══════════════════════════════════════
@@ -441,6 +466,22 @@ async def main() -> None:
     all_items = step2_write_captions(claude_client, all_items)
     step3_download_videos(claude_client, all_items)
     await step4_send_telegram(all_items)
+
+    print("\n═══ QUALITY GATE ═══")
+    for pattern in ("vid_final_*.mp4", "vid_dual_*.mp4"):
+        for f in sorted(OUT.glob(pattern)):
+            info = probe_video_stream(str(f))
+            if info:
+                w = info.get("width", "?")
+                h = info.get("height", "?")
+                br = info.get("bit_rate", "?")
+                print(f"  {f.name}: {w}x{h}, bitrate={br}")
+                if isinstance(w, int) and isinstance(h, int) and (w < 1920 or h < 1080):
+                    print(f"    ⚠️ Below 1080p target")
+                if isinstance(br, str) and br.isdigit() and int(br) < 6_000_000:
+                    print(f"    ⚠️ Bitrate below 6Mbps")
+            else:
+                print(f"  {f.name}: ffprobe unavailable")
 
     print(f"\n{'═' * 55}")
     print("  SUMMARY")

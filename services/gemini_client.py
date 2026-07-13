@@ -258,3 +258,49 @@ async def discover_and_verify(week_offset: int = 1, max_events: int = 3) -> list
         log.warning("No events verified — returning top %d unverified", max_events)
         return events[:max_events]
     return verified
+
+
+def analyze_youtube_video(url: str) -> dict | None:
+    """
+    Gemini watches a YouTube video NATIVELY (via URL, no download).
+    Returns structured analysis: scenes, quality, burned-in text,
+    whether it SHOWS the luxury product, and the best clean segment.
+    """
+    import json as _json
+
+    if not settings.gemini_api_key:
+        log.warning("GEMINI_API_KEY not set — skipping YouTube video analysis")
+        return None
+
+    prompt = """Watch this entire video carefully. Return ONLY valid JSON:
+{
+ "main_subject": "what this video is actually about, one sentence",
+ "scenes": "scene-by-scene summary, 3-5 lines",
+ "production_quality": "official_brand_promo|professional|amateur_vlog|broadcast|analysis_content",
+ "burned_in_text": "any text/graphics baked into the video (titles, stats, split-screens, telemetry, subtitles) and WHERE they appear, or 'none'",
+ "third_party_logos": "logos/watermarks visible and when, or 'none'",
+ "has_narration": true,
+ "shows_luxury_product": "does it visually show premium travel product a client would desire: cabin/seat/service/lounge/venue hospitality/destination beauty? Describe WHAT is shown, or 'no'",
+ "best_clean_segment": {"start_s": 12, "end_s": 22, "why": "shows X, no text overlays, cinematic"},
+ "avoid_segments": "timestamps with logos/burned text/irrelevant content"
+}
+best_clean_segment = 8-12 seconds, visually strongest, NO burned-in text/graphics/logos in frame."""
+
+    try:
+        client = _get_client()
+        resp = client.models.generate_content(
+            model=settings.gemini_model,
+            contents=[
+                types.Part(file_data=types.FileData(file_uri=url)),
+                prompt,
+            ],
+        )
+        raw = (resp.text or "").strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1]
+        if raw.endswith("```"):
+            raw = raw[:-3]
+        return _json.loads(raw.strip())
+    except Exception as exc:
+        log.warning("YouTube video analysis failed for %s: %s", url[:50], exc)
+        return None
