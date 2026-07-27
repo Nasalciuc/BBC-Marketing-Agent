@@ -1,7 +1,7 @@
 """
 5 video+text posts for this week.
-3 existing topics (ANA cabin, Royal Birkdale Open, Spa-Francorchamps) + 2 new.
-Format: VIDEO clip (yt-dlp official) + caption + Approve/Reject buttons.
+All topics discovered fresh by Gemini (zero hardcoded).
+Format: VIDEO clip (4K multi-source) + caption + Approve/Reject buttons.
 NO branded photo — video only.
 """
 from __future__ import annotations
@@ -30,9 +30,21 @@ from scripts.real_footage_pipeline import (  # noqa: E402
     _parse_json_array,
 )
 from services.supabase_client import save_campaign, update_review_tracking  # noqa: E402
+from services.campaign_store import save_campaign_local  # noqa: E402
 from services.telegram_client import send_approval_request, send_message  # noqa: E402
-from services.video_processor import brand_video, concat_videos, probe_video_stream, trim_video  # noqa: E402
-from services.gemini_client import analyze_youtube_video  # noqa: E402
+from services.video_processor import (  # noqa: E402
+    brand_video,
+    concat_videos,
+    normalize_to_landscape,
+    probe_video_stream,
+    trim_video,
+    video_duration,
+)
+from services.gemini_client import (  # noqa: E402
+    analyze_video_file,
+    analyze_youtube_video,
+    find_pinterest_videos,
+)
 from services.youtube_client import download_clip, search_youtube  # noqa: E402
 
 TODAY = datetime.now(UTC).strftime("%B %d, %Y")
@@ -56,69 +68,21 @@ except Exception:
 # DEFINE ALL 5 TOPICS
 # ═══════════════════════════════════════
 
-EXISTING = [
-    {
-        "name": "ANA New Business Class Cabin",
-        "headline": "ANA just redefined what business class means.",
-        "type": "cabin",
-        "city": "",
-        "youtube_queries": [
-            "ANA airlines new business class cabin official reveal 2026",
-            "ANA All Nippon Airways business class suite official",
-            "ANA business class cabin tour cinematic 4K",
-        ],
-    },
-    {
-        "name": "The 154th Open Championship at Royal Birkdale",
-        "headline": "The Open. Royal Birkdale. Golf's oldest trophy.",
-        "type": "event",
-        "city": "Southport, England",
-        "dates": "July 12-19, 2026",
-        "access": {
-            "gateway_airport": "Manchester Airport",
-            "iata": "MAN",
-            "us_hubs_nonstop": ["JFK", "EWR"],
-            "flight_time": "about 7 hours",
-            "transfer": "45-minute drive to Southport",
-        },
-        "youtube_queries": [
-            "The Open Championship Royal Birkdale official promo 2026",
-            "Royal Birkdale golf course cinematic aerial drone 4K",
-            "The Open golf championship official film R&A",
-        ],
-    },
-    {
-        "name": "Belgian Grand Prix at Spa-Francorchamps",
-        "headline": "Spa. The Ardennes. The longest circuit in F1.",
-        "type": "event",
-        "city": "Spa, Belgium",
-        "dates": "July 17-19, 2026",
-        "access": {
-            "gateway_airport": "Brussels Airport",
-            "iata": "BRU",
-            "us_hubs_nonstop": ["JFK", "EWR"],
-            "flight_time": "about 8 hours",
-            "transfer": "1-hour drive to Spa-Francorchamps",
-        },
-        "youtube_queries": [
-            "Belgian Grand Prix Spa-Francorchamps official F1 promo",
-            "Spa-Francorchamps F1 VIP hospitality paddock experience",
-            "Spa-Francorchamps circuit cinematic aerial drone 4K",
-        ],
-    },
-]
+# Săptămâna asta: TOATE subiectele descoperite proaspăt (zero hardcodat)
+EXISTING: list[dict] = []
 
 
 # ═══════════════════════════════════════
-# STEP 1 — Find 2 NEW topics (Gemini)
+# STEP 1 — Find 5 FRESH topics (Gemini)
 # ═══════════════════════════════════════
 
 def step1_find_new_topics(gemini: genai.Client) -> list[dict]:
-    print(f"\n🔍 STEP 1 — Finding 2 new topics ({TODAY})...\n")
+    print(f"\n🔍 STEP 1 — Finding 5 fresh topics ({TODAY})...\n")
 
-    prompt = f"""Today is {TODAY}. Search the web for 2 CURRENT premium travel topics
-for businessmen 45+ (executives, entrepreneurs). The topics must be DIFFERENT from:
-- ANA business class cabin, Royal Birkdale Open, Spa-Francorchamps F1.
+    prompt = f"""Today is {TODAY}. Search the web for 5 CURRENT premium travel topics
+for businessmen 45+ (executives, entrepreneurs).
+Cover THIS WEEK's fresh angles. Prefer subjects with official brand video
+or strong cinematic footage available (YouTube or Pinterest).
 
 Find items where an OFFICIAL brand video likely exists on YouTube.
 Prefer: new airline cabins/lounges, prestige destinations, major sports events.
@@ -136,7 +100,7 @@ For each:
 "us_hubs_nonstop":["JFK"],"flight_time":"about X hours",
 "transfer":"X-minute drive to..."}},"youtube_queries":["official brand query","cinematic 4K query","backup query"]}}
 
-Set access: null for cabin reveals. Return JSON array, exactly 2. No markdown fences."""
+Set access: null for cabin reveals. Return JSON array, exactly 5 items — mix: cabin + destination + sports event + hotel/lounge + one more. No markdown fences."""
 
     # NOTE: do NOT set response_mime_type with google_search tools (causes 400)
     resp = gemini.models.generate_content(
@@ -159,6 +123,9 @@ Set access: null for cabin reveals. Return JSON array, exactly 2. No markdown fe
 
     for it in new_items:
         print(f"  ✅ {it.get('headline', it.get('name', '?'))}")
+    (OUT / "step1_findings.json").write_text(
+        json.dumps(new_items, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     return new_items
 
 
@@ -211,12 +178,351 @@ Return JSON array, exactly 5. "name" must match input exactly. No markdown.""",
 # STEP 3 — Download video for ALL 5 (official first)
 # ═══════════════════════════════════════
 
-def step3_download_videos(claude_client: anthropic.Anthropic, all_items: list[dict]) -> None:
-    """Candidates → Gemini WATCHES each → Claude verdict on full description →
-    download ONLY the winner, ONLY the clean segment, at 4K."""
-    print("\n📹 STEP 3 — Gemini watches, Claude decides, targeted download...\n")
+_JUNK_TITLE_WORDS = (
+    "preview |",
+    "power rankings",
+    "analysts",
+    "can i break",
+    "golfers that can win",
+    "needs an open",
+    "walking tour",
+    "how to walk",
+    "my trip",
+    "i tried",
+    "honest review",
+    "real look inside",
+)
 
-    verdict_context = (
+
+def _bad_title(title: str) -> bool:
+    t = title.lower()
+    return any(w in t for w in _JUNK_TITLE_WORDS)
+
+
+def _collect_candidates(queries: list[str], limit: int = 5) -> list[dict]:
+    candidates: list[dict] = []
+    for q in queries:
+        for v in search_youtube(q, max_results=3):
+            if v["url"] in {c["url"] for c in candidates}:
+                continue
+            if _bad_title(v.get("title", "")):
+                continue
+            candidates.append(v)
+
+    if queries:
+        pins = find_pinterest_videos(queries[0], max_results=3)
+        for p in pins:
+            if p["url"] not in {c["url"] for c in candidates}:
+                candidates.append(p)
+
+    candidates.sort(
+        key=lambda v: (
+            0 if _is_official_channel(v.get("uploader", "")) else 1,
+            -(v.get("view_count") or 0),
+        )
+    )
+    return candidates[:limit]
+
+
+def _fallback_queries(item: dict) -> list[str]:
+    name = item.get("name", "")
+    city = item.get("city", "")
+    if item.get("type") == "event":
+        if "birkdale" in name.lower() or "open" in name.lower():
+            return [
+                "Royal Birkdale golf club drone flyover 4K",
+                "The Open Championship trophy cinematic official",
+            ]
+        if "spa" in name.lower() or "grand prix" in name.lower():
+            return [
+                "Spa Francorchamps Eau Rouge drone 4K cinematic",
+                "Formula 1 Spa circuit cinematic official",
+            ]
+    if item.get("type") == "cabin":
+        return [name + " official reveal cinematic 4K", name + " cabin tour official"]
+    return [name + " official promo cinematic 4K", f"{city} luxury cinematic drone 4K" if city else name + " cinematic 4K"]
+
+
+def _analyze_candidates(candidates: list[dict], post_index: int) -> list[dict]:
+    analyses: list[dict] = []
+    for c in candidates:
+        print(f"     👁️ Gemini watching: \"{c['title'][:45]}\" ({c.get('uploader', '?')})")
+        if c.get("source") == "pinterest":
+            tmp = download_clip(
+                c["url"],
+                str(OUT / f"pin_{post_index}_{len(analyses)}.mp4"),
+                max_seconds=60,
+            )
+            if not tmp:
+                print("        ⚠️ pin download failed")
+                continue
+            a = analyze_video_file(tmp)
+            if a:
+                a["_local_file"] = tmp
+        else:
+            a = analyze_youtube_video(c["url"])
+        if a:
+            analyses.append({"candidate": c, "analysis": a})
+            print(f"        → {a.get('main_subject', '?')[:60]}")
+        else:
+            print("        ⚠️ analysis failed — skipping candidate")
+    return analyses
+
+
+def pick_intro(item: dict, used_in_batch: set, week: str) -> str | None:
+    """Airline-match > window > None. No duplicates in batch, no back-to-back weeks."""
+    lib_file = ROOT / "assets" / "journey_clips" / "library.json"
+    if not lib_file.exists():
+        return None
+    lib = json.loads(lib_file.read_text(encoding="utf-8"))
+
+    def usable(k: str, v: dict) -> bool:
+        return (
+            k not in used_in_batch
+            and Path(v["file"]).exists()
+            and v.get("last_used_week") != week
+        )
+
+    gateway_airlines = {
+        "MAN": ["british airways"],
+        "LHR": ["british airways"],
+        "BRU": ["lufthansa", "british airways"],
+        "DXB": ["emirates"],
+        "DOH": ["qatar airways"],
+        "NRT": ["ana"],
+        "HND": ["ana"],
+    }
+    iata = (item.get("access") or {}).get("iata", "")
+    for airline in gateway_airlines.get(iata, []):
+        for k, v in lib.items():
+            if v.get("airline") == airline and usable(k, v):
+                used_in_batch.add(k)
+                v["last_used_week"] = week
+                lib_file.write_text(json.dumps(lib, indent=2), encoding="utf-8")
+                return v["file"]
+
+    if item.get("type") in ("destination", "event", "hotel"):
+        for k, v in lib.items():
+            if v.get("type") == "window" and usable(k, v):
+                used_in_batch.add(k)
+                v["last_used_week"] = week
+                lib_file.write_text(json.dumps(lib, indent=2), encoding="utf-8")
+                return v["file"]
+
+    return None
+
+
+def _claude_verdict(
+    claude_client: anthropic.Anthropic,
+    item: dict,
+    analyses: list[dict],
+    verdict_context: str,
+    *,
+    must_pick: bool = False,
+) -> dict:
+    digest = "\n\n".join(
+        f"CANDIDATE {j}:\n"
+        f"Title: {x['candidate']['title']}\nUploader: {x['candidate'].get('uploader', '?')}\n"
+        f"Analysis: {json.dumps(x['analysis'], ensure_ascii=False)}"
+        for j, x in enumerate(analyses)
+    )
+    must_pick_note = (
+        "\nYou MUST pick the best available candidate (pick >= 0). "
+        "Prefer clean cinematic segments showing the venue/course/circuit/cabin even if not perfect."
+        if must_pick
+        else ""
+    )
+    v = claude_client.messages.create(
+        model=MODEL,
+        max_tokens=200,
+        system=verdict_context,
+        messages=[
+            {
+                "role": "user",
+                "content": f"""Post: "{item.get('headline', item['name'])}" (type: {item.get('type', '')}).
+
+Gemini watched these candidates:
+
+{digest}
+
+Pick the ONE where the client SEES the premium product, on-subject, clean segment available.
+Reply EXACTLY: {{"pick": 0, "start_s": 12, "end_s": 22}} using the candidate's best_clean_segment,
+or {{"pick": -1, "reason": "..."}} if none qualify.{must_pick_note}""",
+            }
+        ],
+    )
+    vt = v.content[0].text.strip()
+    if vt.startswith("```"):
+        vt = vt.split("\n", 1)[1].rstrip("`").strip()
+    return json.loads(vt)
+
+
+def _gemini_best_fallback(analyses: list[dict]) -> dict | None:
+    rank = {
+        "official_brand_promo": 0,
+        "professional": 1,
+        "broadcast": 2,
+        "amateur_vlog": 3,
+        "analysis_content": 4,
+    }
+    scored: list[tuple[int, dict]] = []
+    for x in analyses:
+        a = x["analysis"]
+        seg = a.get("best_clean_segment") or {}
+        if not seg.get("end_s"):
+            continue
+        luxury = str(a.get("shows_luxury_product", "")).lower()
+        if luxury == "no":
+            continue
+        pq = a.get("production_quality", "analysis_content")
+        scored.append((rank.get(pq, 50), x))
+    if not scored:
+        return None
+    scored.sort(key=lambda t: t[0])
+    best = scored[0][1]
+    seg = best["analysis"].get("best_clean_segment") or {}
+    return {
+        "pick": analyses.index(best),
+        "start_s": seg.get("start_s", 5),
+        "end_s": seg.get("end_s", 15),
+        "reason": "gemini_best_fallback",
+    }
+
+
+def _download_branded_segment(
+    item: dict,
+    i: int,
+    chosen: dict,
+    analysis: dict,
+    seg_start: int,
+    seg_len: int,
+    batch_used: set,
+) -> bool:
+    local_file = analysis.get("_local_file")
+    if local_file and Path(local_file).exists():
+        clip = local_file
+    else:
+        clip = download_clip(
+            chosen["url"],
+            str(OUT / f"vid_raw_{i}.mp4"),
+            max_seconds=seg_start + seg_len + 2,
+        )
+    if not clip:
+        print("     ⚠️ Download failed")
+        return False
+
+    trimmed = trim_video(clip, str(OUT / f"vid_clip_{i}.mp4"), start=seg_start, duration=seg_len)
+    if not trimmed:
+        return False
+
+    if analysis.get("aspect") == "vertical":
+        normalized = normalize_to_landscape(trimmed, str(OUT / f"vid_norm_{i}.mp4"))
+        if normalized:
+            trimmed = normalized
+
+    branded = brand_video(
+        trimmed,
+        str(OUT / f"vid_final_{i}.mp4"),
+        headline=item.get("headline", ""),
+        footer="buybusinessclass.com",
+    )
+    if not branded:
+        return False
+
+    item["video_final"] = branded
+    print(f"     ✅ Final: {Path(branded).stat().st_size // 1024}KB")
+
+    if branded and item.get("type") in ("event", "destination", "hotel"):
+        intro = pick_intro(item, batch_used, WEEK)
+        if intro:
+            dual = concat_videos(intro, branded, str(OUT / f"vid_dual_{i}.mp4"))
+            if dual:
+                intro_d = video_duration(intro)
+                branded_d = video_duration(branded)
+                dual_d = video_duration(dual)
+                if abs(dual_d - (intro_d + branded_d)) <= 1.0:
+                    item["video_final"] = dual
+                    print(f"     ✅ DUAL ({Path(intro).stem} + dest)")
+                else:
+                    print("     ⚠️ Concat duration mismatch → solo destination")
+    return True
+
+
+def _process_one_video_item(
+    claude_client: anthropic.Anthropic,
+    item: dict,
+    i: int,
+    verdict_context: str,
+    batch_used: set,
+) -> bool:
+    """Run Gemini→Claude→download for a single post. Returns True if video produced."""
+    queries = item.get("youtube_queries") or [item["name"] + " official promo luxury"]
+    print(f"  {i}. {item.get('headline', item['name'])[:50]}")
+
+    candidates = _collect_candidates(queries)
+    if not candidates:
+        print("     ⬜ No candidates — trying fallback queries")
+        candidates = _collect_candidates(_fallback_queries(item))
+
+    if not candidates:
+        print("     ⬜ No candidates")
+        return False
+
+    analyses = _analyze_candidates(candidates, i)
+
+    if not analyses:
+        print("     ⬜ No analyzable videos — trying fresh candidates")
+        extra = _collect_candidates(_fallback_queries(item))
+        extra = [c for c in extra if c["url"] not in {a["candidate"]["url"] for a in analyses}]
+        if extra:
+            analyses.extend(_analyze_candidates(extra, i))
+
+    if not analyses:
+        print("     ⬜ No analyzable videos — skipping video for this post")
+        return False
+
+    try:
+        verdict = _claude_verdict(claude_client, item, analyses, verdict_context)
+    except Exception as exc:
+        print(f"     ⚠️ Verdict parse failed: {exc} — using first analysis")
+        a0 = analyses[0]["analysis"].get("best_clean_segment") or {}
+        verdict = {"pick": 0, "start_s": a0.get("start_s", 5), "end_s": a0.get("end_s", 15)}
+
+    if verdict.get("pick", -1) < 0:
+        print(f"     🚫 Claude: {verdict.get('reason', 'none qualify')[:80]}")
+        print("     🔄 Round 2 — expanded search + softer pick...")
+        extra_queries = _fallback_queries(item)
+        round2 = _collect_candidates(extra_queries)
+        round2 = [c for c in round2 if c["url"] not in {a["candidate"]["url"] for a in analyses}]
+        if round2:
+            analyses.extend(_analyze_candidates(round2, i))
+        try:
+            verdict = _claude_verdict(claude_client, item, analyses, verdict_context, must_pick=True)
+        except Exception:
+            verdict = _gemini_best_fallback(analyses) or {"pick": -1}
+
+    if verdict.get("pick", -1) < 0:
+        verdict = _gemini_best_fallback(analyses) or verdict
+
+    if verdict.get("pick", -1) < 0:
+        print("     ⬜ No usable video after all rounds")
+        return False
+
+    winner = analyses[min(verdict["pick"], len(analyses) - 1)]
+    chosen = winner["candidate"]
+    winner_analysis = winner["analysis"]
+    seg_start = max(0, int(verdict.get("start_s", 5)))
+    seg_end = int(verdict.get("end_s", seg_start + 10))
+    seg_len = max(6, min(12, seg_end - seg_start))
+    print(f"     ✅ WINNER: \"{chosen['title'][:45]}\" · segment {seg_start}-{seg_start + seg_len}s")
+
+    return _download_branded_segment(
+        item, i, chosen, winner_analysis, seg_start, seg_len, batch_used
+    )
+
+
+def _verdict_context() -> str:
+    return (
         brand_dna
         + """
 You judge videos by their FULL content description (Gemini watched them).
@@ -225,114 +531,74 @@ REJECT: analysis/educational content, split-screens, stats graphics,
 feature demos without the product, heavy burned-in text, third-party logos."""
     )
 
+
+def regenerate_video_for_item(claude_client: anthropic.Anthropic, item: dict, index: int) -> str | None:
+    """Re-run video pipeline for one campaign item. Returns path to final video."""
+    item.pop("video_final", None)
+    item.pop("video_clip", None)
+    if _process_one_video_item(claude_client, item, index, _verdict_context(), set()):
+        return item.get("video_final") or item.get("video_clip")
+    return None
+
+
+def _qc_text(val) -> str:
+    if val is None:
+        return ""
+    if isinstance(val, list):
+        return " ".join(str(x) for x in val).lower()
+    return str(val).lower()
+
+
+def qc_gate(all_items: list[dict]) -> None:
+    """Gemini watches OUR final videos. FAIL → fallback or drop."""
+    print("\n🛡️ QC GATE — Gemini checking our output...\n")
+
     for i, item in enumerate(all_items, 1):
-        queries = item.get("youtube_queries") or [item["name"] + " official promo luxury"]
-        print(f"  {i}. {item.get('headline', item['name'])[:50]}")
-
-        candidates: list[dict] = []
-        for q in queries[:2]:
-            vids = search_youtube(q, max_results=3)
-            for v in vids:
-                if v["url"] not in [c["url"] for c in candidates]:
-                    candidates.append(v)
-        candidates.sort(key=lambda v: 0 if _is_official_channel(v.get("uploader", "")) else 1)
-        candidates = candidates[:3]
-
-        if not candidates:
-            print("     ⬜ No candidates")
+        vid = item.get("video_final")
+        if not vid or not Path(vid).exists():
             continue
-
-        analyses: list[dict] = []
-        for c in candidates:
-            print(f"     👁️ Gemini watching: \"{c['title'][:45]}\" ({c.get('uploader', '?')})")
-            a = analyze_youtube_video(c["url"])
-            if a:
-                analyses.append({"candidate": c, "analysis": a})
-                print(f"        → {a.get('main_subject', '?')[:60]}")
-            else:
-                print("        ⚠️ analysis failed — skipping candidate")
-
-        if not analyses:
-            print("     ⬜ No analyzable videos — skipping video for this post")
-            continue
-
-        digest = "\n\n".join(
-            f"CANDIDATE {j}:\n"
-            f"Title: {x['candidate']['title']}\nUploader: {x['candidate'].get('uploader', '?')}\n"
-            f"Analysis: {json.dumps(x['analysis'], ensure_ascii=False)}"
-            for j, x in enumerate(analyses)
-        )
         try:
-            v = claude_client.messages.create(
-                model=MODEL,
-                max_tokens=200,
-                system=verdict_context,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": f"""Post: "{item.get('headline', item['name'])}" (type: {item.get('type', '')}).
+            a = analyze_video_file(vid)
+            if not a:
+                print(f"  {i}. ⚠️ QC unavailable — keeping (manual check)")
+                continue
 
-Gemini watched these candidates:
+            problems = []
+            scenes = _qc_text(a.get("scenes"))
+            if any(w in scenes for w in ("frozen", "static", "same frame", "repeat")):
+                problems.append("frozen/repeated frames")
+            logos = str(a.get("third_party_logos", "none"))
+            if logos.lower() != "none":
+                problems.append(f"logos: {logos[:40]}")
+            luxury = _qc_text(a.get("shows_luxury_product", "no"))
+            if luxury == "no" or luxury.startswith("no "):
+                problems.append("no visible product")
 
-{digest}
-
-Pick the ONE where the client SEES the premium product, on-subject, clean segment available.
-Reply EXACTLY: {{"pick": 0, "start_s": 12, "end_s": 22}} using the candidate's best_clean_segment,
-or {{"pick": -1, "reason": "..."}} if none qualify.""",
-                    }
-                ],
-            )
-            vt = v.content[0].text.strip()
-            if vt.startswith("```"):
-                vt = vt.split("\n", 1)[1].rstrip("`").strip()
-            verdict = json.loads(vt)
+            if problems:
+                print(f"  {i}. 🚫 QC FAIL: {'; '.join(problems)}")
+                solo = str(OUT / f"vid_final_{i}.mp4")
+                if item["video_final"] != solo and Path(solo).exists():
+                    item["video_final"] = solo
+                    print("       → fallback: solo destination")
+                else:
+                    item.pop("video_final", None)
+                    print("       → dropped video (text+buttons only)")
+            else:
+                subject = str(a.get("main_subject", ""))[:50]
+                print(f"  {i}. ✅ QC PASS — {subject}")
         except Exception as exc:
-            print(f"     ⚠️ Verdict parse failed: {exc} — using first analysis")
-            a0 = analyses[0]["analysis"].get("best_clean_segment") or {}
-            verdict = {"pick": 0, "start_s": a0.get("start_s", 5), "end_s": a0.get("end_s", 15)}
+            print(f"  {i}. ⚠️ QC error ({exc}) — keeping (manual check)")
 
-        if verdict.get("pick", -1) < 0:
-            print(f"     🚫 Claude: {verdict.get('reason', 'none qualify')} — no video for this post")
-            continue
 
-        chosen = analyses[min(verdict["pick"], len(analyses) - 1)]["candidate"]
-        seg_start = max(0, int(verdict.get("start_s", 5)))
-        seg_end = int(verdict.get("end_s", seg_start + 10))
-        seg_len = max(6, min(12, seg_end - seg_start))
-        print(f"     ✅ WINNER: \"{chosen['title'][:45]}\" · segment {seg_start}-{seg_start + seg_len}s")
+def step3_download_videos(claude_client: anthropic.Anthropic, all_items: list[dict]) -> None:
+    """Candidates → Gemini WATCHES each → Claude verdict on full description →
+    download ONLY the winner, ONLY the clean segment, at 4K."""
+    print("\n📹 STEP 3 — Gemini watches, Claude decides, targeted download...\n")
 
-        clip = download_clip(
-            chosen["url"],
-            str(OUT / f"vid_raw_{i}.mp4"),
-            max_seconds=seg_start + seg_len + 2,
-        )
-        if not clip:
-            print("     ⚠️ Download failed")
-            continue
-
-        trimmed = trim_video(clip, str(OUT / f"vid_clip_{i}.mp4"), start=seg_start, duration=seg_len)
-        if not trimmed:
-            continue
-
-        branded = brand_video(
-            trimmed,
-            str(OUT / f"vid_final_{i}.mp4"),
-            headline=item.get("headline", ""),
-            footer="buybusinessclass.com",
-        )
-        if not branded:
-            continue
-
-        item["video_final"] = branded
-        print(f"     ✅ Final: {Path(branded).stat().st_size // 1024}KB")
-
-        if item.get("type") in ("event", "destination", "hotel"):
-            cabin = ROOT / "assets" / "cabin_clips" / "qsuite_intro.mp4"
-            if cabin.exists():
-                dual = concat_videos(str(cabin), branded, str(OUT / f"vid_dual_{i}.mp4"))
-                if dual:
-                    item["video_final"] = dual
-                    print(f"     ✅ DUAL (cabin+destination): {Path(dual).stat().st_size // 1024}KB")
+    ctx = _verdict_context()
+    batch_used: set[str] = set()
+    for i, item in enumerate(all_items, 1):
+        _process_one_video_item(claude_client, item, i, ctx, batch_used)
 
 
 # ═══════════════════════════════════════
@@ -385,7 +651,13 @@ async def step4_send_telegram(all_items: list[dict]) -> None:
             "whatsapp_caption": caption,
             "event_context": item.get("details", ""),
             "status": "draft",
+            "index": i,
+            "media_type": "video",
+            "youtube_queries": item.get("youtube_queries"),
+            "headline": item.get("headline", ""),
+            "type": item.get("type", ""),
         }
+        save_campaign_local(campaign)
         await save_campaign(campaign)
 
         if vid and Path(vid).exists():
@@ -457,14 +729,14 @@ async def main() -> None:
     gemini = genai.Client(api_key=settings.gemini_api_key)
     claude_client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
-    new_topics = step1_find_new_topics(gemini)
-    all_items = EXISTING + new_topics[:2]
+    all_items = step1_find_new_topics(gemini)[:5]
 
     if len(all_items) < 5:
         print(f"  ⚠️ Only {len(all_items)} topics (need 5)")
 
     all_items = step2_write_captions(claude_client, all_items)
     step3_download_videos(claude_client, all_items)
+    qc_gate(all_items)
     await step4_send_telegram(all_items)
 
     print("\n═══ QUALITY GATE ═══")
