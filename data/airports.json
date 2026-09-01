@@ -59,5 +59,6 @@
   {"iata_code": "BOG", "name": "El Dorado International", "city": "Bogotá", "country": "Colombia", "continent_code": "SA"},
   {"iata_code": "SCL", "name": "Arturo Merino Benítez", "city": "Santiago", "country": "Chile", "continent_code": "SA"},
   {"iata_code": "LIM", "name": "Jorge Chávez International", "city": "Lima", "country": "Peru", "continent_code": "SA"},
-  {"iata_code": "MCO", "name": "Orlando International", "city": "Orlando", "country": "United States", "continent_code": "NA"}
+  {"iata_code": "MCO", "name": "Orlando International", "city": "Orlando", "country": "United States", "continent_code": "NA"},
+  {"iata_code": "EDI", "name": "Edinburgh Airport", "city": "Edinburgh", "country": "United Kingdom", "continent_code": "EU"}
 ]

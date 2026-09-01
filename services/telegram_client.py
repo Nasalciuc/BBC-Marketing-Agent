@@ -88,6 +88,49 @@ async def send_photo(
         return None
 
 
+async def send_photo_file(
+    chat_id: str | int | None = None,
+    photo_path: str = "",
+    caption: str = "",
+    parse_mode: str = "Markdown",
+    reply_markup: dict | None = None,
+) -> dict | None:
+    """Trimite imagine pe Telegram din fișier local (multipart, fără URL public)."""
+    from pathlib import Path as P
+
+    if not settings.telegram_bot_token:
+        log.warning("Telegram not configured — skipping photo")
+        return None
+
+    chat_id = chat_id or settings.telegram_chat_id
+    path = P(photo_path)
+    if not path.exists():
+        log.error("Photo not found: %s", photo_path)
+        return None
+
+    data: dict = {"chat_id": str(chat_id)}
+    if caption:
+        data["caption"] = caption[:1024]
+        data["parse_mode"] = parse_mode
+    if reply_markup:
+        data["reply_markup"] = json.dumps(reply_markup)
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                _bot_url("sendPhoto"),
+                data=data,
+                files={"photo": (path.name, path.read_bytes(), "image/jpeg")},
+            )
+            result = resp.json()
+            if not result.get("ok"):
+                log.error("Telegram sendPhoto (file) failed: %s", result)
+            return result
+    except Exception as e:
+        log.error("Telegram sendPhoto (file) error: %s", e)
+        return None
+
+
 async def send_video(
     chat_id: int | str,
     video_path: str,
@@ -197,10 +240,18 @@ async def send_approval_request(
     target_chat = chat_id or settings.telegram_chat_id
 
     image_url = event.get("image_url")
+    image_path = event.get("image_path")
     if image_url:
         result = await send_photo(
             chat_id=target_chat,
             photo_url=image_url,
+            caption=caption,
+            reply_markup=keyboard,
+        )
+    elif image_path:
+        result = await send_photo_file(
+            chat_id=target_chat,
+            photo_path=str(image_path),
             caption=caption,
             reply_markup=keyboard,
         )
