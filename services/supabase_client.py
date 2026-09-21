@@ -136,32 +136,44 @@ async def save_campaign(event: dict) -> bool:
     client = _get_client()
     if not client:
         return False
+    row = {
+        "campaign_id": event.get("campaign_id"),
+        "event_name": event.get("name", event.get("event_name", "")),
+        "city": event.get("city"),
+        "dates_start": event.get("dates_start"),
+        "dates_end": event.get("dates_end"),
+        "category": event.get("category"),
+        "premium_score": event.get("premium_score"),
+        "route": event.get("route_str", event.get("route", "")),
+        "price": event.get("price"),
+        "price_raw": event.get("price_raw"),
+        "image_url": event.get("image_url"),
+        "story_url": event.get("story_url"),
+        "caption": event.get(
+            "caption",
+            event.get("whatsapp_caption", event.get("caption_draft", "")),
+        ),
+        "whatsapp_caption": event.get("whatsapp_caption", ""),
+        "event_context": event.get("event_context", ""),
+        "caption_override": event.get("caption_override"),
+        "status": event.get("status", "draft"),
+        "scheduled_day": event.get("scheduled_day"),
+    }
+    optional = ("whatsapp_caption", "scheduled_day")
     try:
-        client.table("campaigns").upsert(
-            {
-                "campaign_id": event.get("campaign_id"),
-                "event_name": event.get("name", event.get("event_name", "")),
-                "city": event.get("city"),
-                "dates_start": event.get("dates_start"),
-                "dates_end": event.get("dates_end"),
-                "category": event.get("category"),
-                "premium_score": event.get("premium_score"),
-                "route": event.get("route_str", event.get("route", "")),
-                "price": event.get("price"),
-                "price_raw": event.get("price_raw"),
-                "image_url": event.get("image_url"),
-                "story_url": event.get("story_url"),
-                "caption": event.get(
-                    "caption",
-                    event.get("whatsapp_caption", event.get("caption_draft", "")),
-                ),
-                "whatsapp_caption": event.get("whatsapp_caption", ""),
-                "event_context": event.get("event_context", ""),
-                "caption_override": event.get("caption_override"),
-                "status": event.get("status", "draft"),
-            }
-        ).execute()
-        return True
+        for _ in range(len(optional) + 1):
+            try:
+                client.table("campaigns").upsert(row).execute()
+                return True
+            except Exception as e:
+                err = str(e)
+                dropped = [col for col in optional if col in row and col in err]
+                if not dropped:
+                    raise
+                for col in dropped:
+                    row.pop(col, None)
+                log.warning("save_campaign retry omitting %s: %s", dropped, e)
+        return False
     except Exception as e:
         log.error("Failed to save campaign: %s", e)
         return False

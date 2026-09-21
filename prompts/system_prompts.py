@@ -26,6 +26,11 @@ log = logging.getLogger("bbc.prompts")
 CONTACT_BLOCK = """buybusinessclass.com
 ☎️ +1 888-322-7999 📩 deals@buybusinessclass.com"""
 
+CONTACT_LINE_LUX = (
+    "Call +1 888-322-7999 or reply here. A specialist, not a booking form.\n"
+    "buybusinessclass.com"
+)
+
 CONTACT_BLOCK_RULES = """
 CONTACT BLOCK — MANDATORY at the END of every customer-facing message:
 buybusinessclass.com

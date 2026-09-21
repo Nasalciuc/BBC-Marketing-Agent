@@ -413,12 +413,12 @@ def _resolve_renderer() -> str:
     return "hcti" if has_hcti else "playwright"
 
 
-def _screenshot_playwright(html: str) -> bytes:
+def _screenshot_playwright(html: str, width: int = 1200, height: int = 628) -> bytes:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={"width": 1200, "height": 628})
+        page = browser.new_page(viewport={"width": width, "height": height})
 
         page.set_content(html, wait_until="domcontentloaded")
         _inject_font_style_tag(page)
@@ -427,13 +427,25 @@ def _screenshot_playwright(html: str) -> bytes:
         screenshot_bytes = page.screenshot(
             type="jpeg",
             quality=92,
-            clip={"x": 0, "y": 0, "width": 1200, "height": 628},
+            clip={"x": 0, "y": 0, "width": width, "height": height},
         )
+        if height >= 1920:
+            try:
+                headline_h = page.evaluate(
+                    """() => {
+                        const el = document.querySelector('.headline');
+                        return el ? el.getBoundingClientRect().height : 0;
+                    }"""
+                )
+                if headline_h and headline_h > 270:
+                    log.warning("headline_too_long height=%.0f", headline_h)
+            except Exception as exc:
+                log.debug("headline measure failed: %s", exc)
         browser.close()
     return screenshot_bytes
 
 
-def _screenshot_hcti(html: str) -> bytes:
+def _screenshot_hcti(html: str, width: int = 1200, height: int = 628) -> bytes:
     """HTML → JPEG via hcti.io (fără Chromium local)."""
     import httpx
 
@@ -447,8 +459,8 @@ def _screenshot_hcti(html: str) -> bytes:
             data={
                 "html": html,
                 "css": "",
-                "viewport_width": 1200,
-                "viewport_height": 628,
+                "viewport_width": width,
+                "viewport_height": height,
                 "device_scale": 1,
                 "format": "jpg",
             },
@@ -479,6 +491,7 @@ def generate_branded_image(
     urgency: str | None = None,
     cta: str | None = None,
     subtitle: str | None = None,
+    orientation: str = "landscape",
 ) -> bytes:
     """
     Generează imagine branded BBC din HTML template.
@@ -486,8 +499,16 @@ def generate_branded_image(
     Renderer: Playwright (local) sau hcti.io (cloud) — vezi BRANDING_RENDERER.
 
     Returns:
-        JPEG bytes al imaginii generate (1200×628)
+        JPEG bytes al imaginii generate (1200×628 landscape sau 1080×1920 vertical)
     """
+    orientation = (orientation or "landscape").lower()
+    if orientation == "vertical":
+        if template_name == "deal_landscape":
+            template_name = "deal_vertical"
+        width, height = 1080, 1920
+    else:
+        width, height = 1200, 628
+
     rendered_html = _build_rendered_html(
         event_name=event_name,
         route=route,
@@ -508,17 +529,17 @@ def generate_branded_image(
     )
 
     renderer = _resolve_renderer()
-    log.info("Branding renderer: %s", renderer)
+    log.info("Branding renderer: %s (%sx%s)", renderer, width, height)
 
     try:
         if renderer == "hcti":
-            screenshot_bytes = _screenshot_hcti(rendered_html)
+            screenshot_bytes = _screenshot_hcti(rendered_html, width, height)
         else:
-            screenshot_bytes = _screenshot_playwright(rendered_html)
+            screenshot_bytes = _screenshot_playwright(rendered_html, width, height)
     except Exception as exc:
         if renderer == "hcti":
             log.warning("HCTI failed (%s) — falling back to Playwright", exc)
-            screenshot_bytes = _screenshot_playwright(rendered_html)
+            screenshot_bytes = _screenshot_playwright(rendered_html, width, height)
         else:
             raise
 

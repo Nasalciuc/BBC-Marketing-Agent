@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root {
+    --navy: #0B1829;
+    --gold: #C9A54E;
+    --white: #FFFFFF;
+    --muted: rgba(255, 255, 255, 0.65);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    width: 1080px;
+    height: 1920px;
+    position: relative;
+    overflow: hidden;
+    font-family: 'Inter', 'Segoe UI', 'SF Pro Display', 'Helvetica Neue', sans-serif;
+    background: var(--navy);
+  }
+
+  .bg {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+
+  .scrim {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 55%;
+    background: linear-gradient(
+      180deg,
+      rgba(11, 24, 41, 0) 0%,
+      rgba(11, 24, 41, 0.55) 35%,
+      rgba(11, 24, 41, 0.92) 100%
+    );
+  }
+
+  .logo {
+    position: absolute;
+    top: 96px;
+    left: 72px;
+    z-index: 2;
+  }
+
+  .logo img {
+    height: auto;
+    width: 220px;
+    display: block;
+  }
+
+  .logo-text {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--white);
+    letter-spacing: 0.5px;
+  }
+
+  .block {
+    position: absolute;
+    left: 72px;
+    right: 72px;
+    bottom: 110px;
+    z-index: 2;
+  }
+
+  .eyebrow {
+    color: var(--gold);
+    font-weight: 700;
+    font-size: 30px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    margin-bottom: 22px;
+  }
+
+  .headline {
+    color: var(--white);
+    font-weight: 900;
+    font-size: 88px;
+    line-height: 1.02;
+    letter-spacing: -1.5px;
+    margin-bottom: 34px;
+    max-width: 936px;
+  }
+
+  .price-label {
+    color: var(--gold);
+    font-weight: 700;
+    font-size: 34px;
+    margin-bottom: 10px;
+  }
+
+  .price {
+    color: var(--gold);
+    font-weight: 900;
+    font-size: 104px;
+    line-height: 1;
+    margin: 8px 0 6px;
+    white-space: nowrap;
+  }
+
+  .price.benefits {
+    font-size: 42px;
+    font-weight: 700;
+    line-height: 1.25;
+    white-space: normal;
+  }
+
+  .trip-label {
+    font-size: 28px;
+    font-weight: 500;
+    color: var(--muted);
+    letter-spacing: 0.4px;
+    text-transform: lowercase;
+    margin-bottom: 8px;
+  }
+
+  .urgency {
+    color: var(--muted);
+    font-weight: 400;
+    font-size: 28px;
+    margin-bottom: 40px;
+  }
+
+  .cta {
+    display: inline-block;
+    border: 2px solid var(--gold);
+    color: var(--gold);
+    font-weight: 700;
+    font-size: 30px;
+    padding: 22px 40px;
+    border-radius: 8px;
+    margin-bottom: 54px;
+  }
+
+  .footer {
+    color: var(--gold);
+    font-weight: 700;
+    font-size: 28px;
+    letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+  <div class="bg" style="background-image:url('{{BG}}')"></div>
+  <div class="scrim"></div>
+  <div class="logo">{{LOGO_HTML}}</div>
+  <div class="block">
+    <div class="eyebrow">{{BADGE}}</div>
+    <div class="headline">{{HEADLINE}}</div>
+    {{SUBTITLE_HTML}}
+    {{PRICE_BLOCK_HTML}}
+    <div class="urgency">{{URGENCY}}</div>
+    {{CTA_BLOCK_HTML}}
+    <div class="footer">{{CTA_URL}}</div>
+  </div>
+</body>
+</html>
