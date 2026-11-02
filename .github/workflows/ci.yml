@@ -9,6 +9,20 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:                      # throwaway database for tests/test_content_system_pg.py
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CONTENT_TEST_DB_URL: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -17,5 +31,5 @@ jobs:
       - run: pip install -r requirements.txt
       - run: playwright install chromium
       - run: python scripts/ensure_default_background.py
-      - run: pytest tests/test_pricing.py tests/test_branding.py tests/test_discovery.py -v
-      - run: ruff check config.py services/ tests/
+      - run: pytest tests -q
+      - run: ruff check .

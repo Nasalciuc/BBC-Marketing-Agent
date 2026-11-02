@@ -7,7 +7,7 @@ Uses Google Gemini API (google-genai SDK) for:
 
 Models:
 - Text/discovery: gemini-2.5-flash
-- Image gen: gemini-2.5-flash-image, gemini-3.1-flash-image (+ Imagen 4 fallback)
+- Image gen: gemini-3.1-flash-image (GA), then gemini-2.5-flash-image
 """
 from __future__ import annotations
 
@@ -30,11 +30,13 @@ from prompts.system_prompts import (
 
 log = logging.getLogger("bbc.gemini")
 
+# ai.google.dev/gemini-api/docs/deprecations (12 Oct 2026): gemini-3.1-flash-image is GA,
+# gemini-2.5-flash-image shuts down on 15 Mar 2027, imagen-4.0-generate-001 shut down on 17 Aug 2026.
 IMAGE_MODELS = [
-    "gemini-2.5-flash-image",
     "gemini-3.1-flash-image",
+    "gemini-2.5-flash-image",
 ]
-IMAGEN_MODEL = "imagen-4.0-generate-001"
+IMAGEN_MODEL = "imagen-4.0-generate-001"  # retired; imported only by scripts/test_gemini_branded_banner.py
 
 
 def _get_client() -> genai.Client:
@@ -182,22 +184,6 @@ def _generate_event_image_sync(image_prompt: str) -> bytes | None:
             log.warning("No image in response from %s", model_name)
         except Exception as exc:
             log.warning("Image gen failed with %s: %s", model_name, exc)
-
-    try:
-        log.info("Trying Imagen 4...")
-        response = client.models.generate_images(
-            model=IMAGEN_MODEL,
-            prompt=image_prompt,
-            config=types.GenerateImagesConfig(
-                number_of_images=1,
-            ),
-        )
-        if response.generated_images:
-            image_bytes = response.generated_images[0].image.image_bytes
-            log.info("Image generated via Imagen 4: %s bytes", f"{len(image_bytes):,}")
-            return image_bytes
-    except Exception as exc:
-        log.warning("Imagen 4 failed: %s", exc)
 
     log.error("All image generation models failed")
     return None
