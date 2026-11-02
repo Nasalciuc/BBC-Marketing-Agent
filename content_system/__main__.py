@@ -2,6 +2,8 @@
 python -m content_system <command>
 
   check    weeks/2026-W43.toml       manifest, captions, week mix, photos — nothing rendered
+  photos   weeks/2026-W43.toml       the missing photos, from each post's [post.image] brief
+           [--post N …] [--again] [--candidates 3]    (GEMINI_API_KEY, ANTHROPIC_API_KEY)
   render   weeks/2026-W43.toml       finished posts + captions + preview in output/content/<week>/
   send     weeks/2026-W43.toml       render, upload, campaigns, Telegram review      (railway run)
   status   weeks/2026-W43.toml       where each post is                               (railway run)
@@ -122,6 +124,50 @@ async def cmd_render(args: argparse.Namespace) -> None:
         sheet.append((f"{p.day_label} · {p.spec.label}", Path(s["image_path"])))
     out = preview_sheet(sheet, out_root / week.name / "_preview.jpg")
     print(f"\nPreview of the week → {out.relative_to(ROOT)}")
+
+
+async def cmd_photos(args: argparse.Namespace) -> None:
+    from config import settings as app
+    from content_system.settings import get_settings
+    from content_system.visual.models import claude_judge, gemini_generator
+    from content_system.visual.photos import make_photo
+
+    week = _load(args.manifest)
+    cs = get_settings()
+    missing = [n for n, v in (("GEMINI_API_KEY", app.gemini_api_key), ("ANTHROPIC_API_KEY", app.anthropic_api_key))
+               if not v]
+    if missing:
+        stop(", ".join(missing) + " not set — run it with: railway run python -m content_system photos …")
+    posts = [p for p in week.posts if not args.post or p.index in args.post]
+    if not any(p.spec.image for p in posts):
+        stop("no post has an [post.image] brief — add one under the post in the manifest")
+    generate = gemini_generator(cs.image_model, app.gemini_api_key, cs.image_size)
+    judge = claude_judge(cs.vision_model, app.anthropic_api_key)
+    folder = week.photos_dir
+    folder.mkdir(parents=True, exist_ok=True)
+    print(f"{week.name} · photos → {week.manifest.photos}/  ({cs.image_model}, checked by {cs.vision_model})")
+    failed = 0
+    for p in posts:
+        r = await make_photo(p, folder, generate, judge, candidates=args.candidates or cs.image_candidates,
+                             again=args.again)
+        if r.status == "kept":
+            print(f"  = {p.day_label}  {p.spec.photo}: already there, kept (--again to make a new one)")
+        elif r.status == "no_brief":
+            print(f"  · {p.day_label}  {p.spec.photo}: no [post.image] brief — put the photo in by hand")
+        elif r.status == "made":
+            best = max((c for c in r.candidates if c.ok), key=lambda c: c.score)
+            others = sum(c.ok for c in r.candidates) - 1
+            print(f"  ✓ {p.day_label}  {Path(r.photo).name}  score {best.score}/10  "
+                  f"(candidate {best.index} of {len(r.candidates)}; {others} other(s) passed, in .candidates/)")
+            for k, v in best.notes.items():
+                if k in ("size", "top"):
+                    print(f"      ! {v}")
+        else:
+            failed += 1
+            print(f"  ✗ {p.day_label}  {p.spec.photo}: no candidate passed — " + "; ".join(r.problems), file=sys.stderr)
+    print("\nLook at them (and at .candidates/), then: python -m content_system render " + args.manifest)
+    if failed:
+        stop(f"{failed} photo(s) not made — change the brief, or run again (each run tries new candidates)")
 
 
 async def cmd_send(args: argparse.Namespace) -> None:
@@ -255,6 +301,11 @@ def main(argv: list[str] | None = None) -> None:
         p.add_argument("manifest")
         if name == "send":
             p.add_argument("--accept-warnings", action="store_true", help="go on despite photo size/ratio warnings")
+    ph = sub.add_parser("photos")
+    ph.add_argument("manifest")
+    ph.add_argument("--post", type=int, nargs="*", help="only these posts (1-based, publishing order)")
+    ph.add_argument("--again", action="store_true", help="make a new photo even where one exists")
+    ph.add_argument("--candidates", type=int, default=0, help="candidates per post (default 3)")
     d = sub.add_parser("decide")
     d.add_argument("campaign_id")
     d.add_argument("action", choices=["approve", "reject"])
@@ -265,7 +316,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "check":
         cmd_check(args)
         return
-    runner = {"render": cmd_render, "send": cmd_send, "status": cmd_status,
+    runner = {"render": cmd_render, "send": cmd_send, "status": cmd_status, "photos": cmd_photos,
               "decide": cmd_decide, "db-setup": cmd_db_setup}[args.command]
     # psycopg's async mode can't run on Windows' default Proactor loop; Playwright renders in a
     # worker thread with its own (default) loop, so only the main loop changes.

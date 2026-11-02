@@ -127,7 +127,10 @@ def _read(path: Path) -> bytes | None:
 def plan_sha(post: PlannedPost) -> str:
     """Fingerprint of everything the manifest says about this post, the photo's bytes included."""
     photo = _read(Path(post.design.background))
-    plan = {"spec": post.spec.model_dump(mode="json"), "caption": post.caption,
+    spec = post.spec.model_dump(mode="json")
+    if spec.get("image") is None:          # posts without a photo brief keep the fingerprint they had
+        spec.pop("image", None)
+    plan = {"spec": spec, "caption": post.caption,
             "design": post.design.model_dump(mode="json", exclude={"background"}),
             "photo": hashlib.sha256(photo).hexdigest() if photo is not None else None}
     return hashlib.sha256(json.dumps(plan, sort_keys=True, ensure_ascii=False).encode()).hexdigest()

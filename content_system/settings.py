@@ -24,6 +24,12 @@ class ContentSettings(BaseSettings):
     lock_timeout_s: float = 8.0    # how long a tap waits for another tap on the same post (toast deadline)
     output_root: str = "output/content"
 
+    # the posts' photos (content_system/visual) — `python -m content_system photos`
+    image_model: str = "gemini-3.1-flash-image"
+    image_size: str = "2K"               # 1K | 2K | 4K, uppercase K (Gemini)
+    vision_model: str = "claude-sonnet-5-5"
+    image_candidates: int = 3
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> ContentSettings:
