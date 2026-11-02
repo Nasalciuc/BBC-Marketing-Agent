@@ -29,6 +29,35 @@ Publishing to the WhatsApp channel is a separate step (broadcast stays off: `BRO
 | `railway run python -m content_system decide <id> approve\|reject` | `CONTENT_DB_URL`, bot token | same as the buttons |
 | `railway run python -m content_system db-setup` | `CONTENT_DB_URL` | LangGraph tables + checks |
 
+### Photos from a brief (`photos`, PR-4)
+
+A post can carry a short brief instead of a photo file; `photos` makes the photo from it:
+
+```toml
+[post.image]
+scene   = "Table Mountain at golden hour over Clifton, the Atlantic below"   # the defining moment
+vantage = "a villa terrace above Clifton beach"                              # where the client is
+device  = "the edge of a teak sun lounger with a folded towel"               # the foreground, from there
+time    = "golden hour"                                                      # optional
+people  = "none"                                                             # or "few": small, left, out of focus
+```
+
+`railway run python -m content_system photos weeks/2026-W43.toml [--post 2 4] [--again] [--candidates 3]`
+
+- Per post with a brief and no photo yet: 3 candidates from `gemini-3.1-flash-image` (9:16, 2K), each
+  cropped to 1080×1920, checked without AI (too small, blank, far too dark or bright), then looked at
+  by `claude-sonnet-5-5` against the rules: one single photograph (no collage, nothing pasted), no
+  crowd, people only if the brief allows them and then small, on the left, out of focus, no text or
+  logos, the brief's scene / vantage / foreground, no generation errors, score ≥ 7/10. Whether it
+  passes is decided in the code from those answers, not by the model.
+- The best passing candidate becomes `<photos>/<photo>.jpg`; all candidates and a report
+  (`<photo>.qc.json`) stay in `<photos>/.candidates/`. A later candidate is told why the earlier failed.
+- A photo already there is kept; `--again` replaces it and moves the old one to `.candidates/`.
+- `check` refuses a week whose foreground device repeats ("empty armchairs on every post").
+- Settings: `CONTENT_IMAGE_MODEL`, `CONTENT_IMAGE_SIZE` (1K/2K/4K), `CONTENT_VISION_MODEL`,
+  `CONTENT_IMAGE_CANDIDATES`; keys `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`.
+- Then, as always: look at the photos, `render`, look at `_preview.jpg`, `send`.
+
 `send` is safe to re-run: posts waiting for review are skipped, a post whose last run failed
 continues where it stopped, and an id that exists in `campaigns` without a content-system thread
 is refused (change `id_tag`).

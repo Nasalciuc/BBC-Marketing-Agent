@@ -18,6 +18,10 @@ Today a person writes it (weeks/2026-W43.toml); later the agents will. One [[pos
     [post.design]                 # services.design_system.PostDesign fields, except `background`
     style = "offer"
     …
+    [post.image]                  # optional: the photo brief — `photos` makes the photo from it
+    scene = "…"                   # (content_system/visual/brief.py)
+    vantage = "…"
+    device = "…"
 
 Everything is checked before anything is rendered or sent: the design fields per style, the week
 mix (≤60% priced, never three priced in a row, a style at most twice), the caption (no "$", no
@@ -33,6 +37,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from content_system.visual.brief import ImageBrief, week_problems
 from prompts.system_prompts import CONTACT_LINE_LUX
 from services.design_system import PostDesign, Style, caption_ending, validate_week_mix
 
@@ -67,6 +72,7 @@ class PostSpec(BaseModel):
     dates_end: date | None = None
     body: str = Field(min_length=1)
     design: dict
+    image: ImageBrief | None = None      # the photo brief, when the photo is to be generated
 
     @model_validator(mode="after")
     def _event_dates(self) -> PostSpec:
@@ -228,6 +234,8 @@ def load_week(path: str | Path) -> Week:
 
     if len(planned) == len(manifest.posts):
         problems.extend("week mix: " + p for p in validate_week_mix([p.design.style for p in planned]))
+        problems.extend("photos: " + p for p in week_problems([(f"post {p.index} ({p.spec.photo})", p.spec.image)
+                                                                for p in planned]))
     if problems:
         raise ManifestError(problems)
     return Week(manifest=manifest, posts=planned, path=path, sha256=hashlib.sha256(raw_bytes).hexdigest())
@@ -241,7 +249,8 @@ def photo_report(week: Week) -> tuple[list[str], list[str]]:
     for p in week.posts:
         found = find_photo(week.photos_dir, p.spec.photo)
         if found is None:
-            errors.append(f"{p.day_label}: {p.spec.photo}.jpg missing in {week.manifest.photos}/")
+            hint = " — `python -m content_system photos` makes it from [post.image]" if p.spec.image else ""
+            errors.append(f"{p.day_label}: {p.spec.photo}.jpg missing in {week.manifest.photos}/{hint}")
             continue
         with Image.open(found) as im:
             w, h = im.size
