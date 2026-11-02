@@ -1,0 +1,76 @@
+{
+  "_note": "Candidates are tried in order; the first one present on the page is used. WhatsApp Web changes its markup: check them with `python -m publishing calibrate --target ...` and add the new selector at the top of the list. {name} is replaced by the channel name, quoted for CSS. The caption box must never be the channel's own message box (#main footer): the code checks it. Only channels are posted to: whatever channel_in_list opens must have a …@newsletter id, or the code stops.",
+  "app_ready": [
+    "#pane-side",
+    "[aria-label=\"Chat list\"]",
+    "[aria-label=\"Channel list\"]",
+    "div[role=\"grid\"][aria-label]"
+  ],
+  "qr": [
+    "canvas[aria-label*=\"QR\" i]",
+    "[data-testid=\"qrcode\"]",
+    "div[data-ref] canvas"
+  ],
+  "channels_tab": [
+    "[aria-label=\"Channels\"][role=\"button\"]",
+    "button[aria-label=\"Channels\"]",
+    "[data-navbar-item] [aria-label=\"Channels\"]",
+    "span[data-icon=\"newsletter-outline\"]",
+    "span[data-icon=\"newsletter\"]"
+  ],
+  "channel_in_list": [
+    "[aria-label=\"Channel list\"] span[title=\"{name}\"]",
+    "[aria-label*=\"channel\" i][role=\"grid\"] span[title=\"{name}\"]"
+  ],
+  "header_title": [
+    "#main header span[title]",
+    "#main header span[dir=\"auto\"]"
+  ],
+  "composer": [
+    "#main footer div[contenteditable=\"true\"]",
+    "#main [aria-label=\"Type an update\"]",
+    "#main [aria-label=\"Type a message\"]"
+  ],
+  "attach_button": [
+    "#main [aria-label=\"Attach\"]",
+    "#main button[title=\"Attach\"]",
+    "#main span[data-icon=\"plus-rounded\"]",
+    "#main span[data-icon=\"clip\"]"
+  ],
+  "image_input": [
+    "input[type=\"file\"][accept^=\"image\"]",
+    "input[type=\"file\"][accept*=\"image\"]"
+  ],
+  "caption_box": [
+    "[aria-label=\"Add a caption\"]",
+    "[aria-label*=\"caption\" i][contenteditable=\"true\"]"
+  ],
+  "send_button": [
+    "[aria-label=\"Send\"]",
+    "span[data-icon=\"send\"]",
+    "span[data-icon=\"wds-ic-send-filled\"]"
+  ],
+  "outgoing": [
+    "#main div.message-out",
+    "#main [data-id^=\"true_\"]"
+  ],
+  "message_text": [
+    "span.selectable-text",
+    "span.copyable-text"
+  ],
+  "any_message": [
+    "#main [data-id]"
+  ],
+  "tick": [
+    "[data-icon=\"msg-check\"]",
+    "[data-icon=\"msg-dblcheck\"]",
+    "[data-icon=\"msg-dblcheck-ack\"]"
+  ],
+  "clock": [
+    "[data-icon=\"msg-time\"]"
+  ],
+  "failed": [
+    "[data-icon=\"msg-error\"]",
+    "[data-icon*=\"error\"]"
+  ]
+}
