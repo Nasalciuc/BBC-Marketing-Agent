@@ -2,12 +2,12 @@
 Publishing an approved campaign: the bridge between the content system and WhatsApp Web.
 
 Only a campaign Betty approved is posted, with the caption of the version she approved and the
-image that was reviewed. Each (campaign, chat) pair is posted at most once, recorded in
-content.effects under publish:wa:<campaign_id>:<chat>:
+image that was reviewed, into a WhatsApp channel. Each (campaign, channel) pair is posted at most
+once, recorded in content.effects under publish:wa:<campaign_id>:<channel>:
 
   - posted / already_posted   → recorded as done; a second call returns the record
   - unconfirmed               → Send was pressed but not confirmed: recorded as done too, so it is
-                                never retried on its own; a person checks the chat and, if the post
+                                never retried on its own; a person checks the channel and, if the post
                                 is not there, clears it with `python -m publishing forget`
   - failed before Send        → no record (nothing went out), it can simply be run again
   - an attempt that never finished (the process died) → refused until a person checks and clears it
@@ -90,14 +90,14 @@ async def publish_campaign(store: Any, wa: WhatsAppWeb, campaign_id: str, target
         status = await store.effect_status(key)
         if status not in (None, "done"):
             raise Unfinished(f"an earlier attempt for {campaign_id} → {target} did not finish ({status}). "
-                             "Check the chat; if the post is not there: python -m publishing forget "
+                             "Check the channel; if the post is not there: python -m publishing forget "
                              f"{campaign_id} --target \"{target}\"")
         # an error before Send means nothing went out: no record is left, so it can run again
         return PostResult.from_json(await store.once(key, post, forget_on=lambda e: True))
 
 
 async def forget(store: Any, campaign_id: str, target: str) -> str | None:
-    """Clear the record of one (campaign, chat) after a person checked the chat. Returns what it held."""
+    """Clear the record of one (campaign, channel) after a person checked the channel. Returns what it held."""
     key = effect_key(campaign_id, target)
     previous = await store.effect_status(key)
     await store.release(key)

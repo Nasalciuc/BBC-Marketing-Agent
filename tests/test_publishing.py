@@ -75,6 +75,7 @@ def test_css_quote_escapes_quotes_and_backslashes():
 
 
 def test_chat_jid_reads_whatsapp_message_ids():
+    assert chat_jid("true_120363000000000010@newsletter_3EB0AB12") == "120363000000000010@newsletter"
     assert chat_jid("true_120363000000000001@g.us_3EB0AB12") == "120363000000000001@g.us"
     assert chat_jid("false_120363000000000001@g.us_3EB0AB12_37360000001@c.us") == "120363000000000001@g.us"
     assert chat_jid("false_37360000001@c.us_3EB0") == "37360000001@c.us"
@@ -83,11 +84,12 @@ def test_chat_jid_reads_whatsapp_message_ids():
 
 def test_default_selectors_cover_every_step_the_code_uses():
     sel = Selectors.load()
-    for key in ("app_ready", "qr", "search_box", "chat_in_list", "header_title", "composer",
+    for key in ("app_ready", "qr", "channels_tab", "channel_in_list", "header_title", "composer",
                 "attach_button", "image_input", "caption_box", "send_button", "outgoing", "message_text",
                 "any_message", "tick", "clock", "failed"):
         assert sel.get(key, name="X"), key
-    assert all("{name}" not in s for s in sel.get("chat_in_list", name="X"))
+    assert all("{name}" not in s for s in sel.get("channel_in_list", name="X"))
+    assert "search_box" not in sel.table and "chat_in_list" not in sel.table, "only channels are opened"
     assert not any("data-tab" in s for s in sel.get("caption_box")), "would also match the chat's message box"
 
 

@@ -13,7 +13,7 @@ class PublishSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="WA_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     enabled: bool = False             # nothing is posted while false; dry runs, status and login still work
-    targets: str = ""                 # chat names allowed to receive posts, exactly as in WhatsApp, "|"-separated
+    targets: str = ""                 # channel names allowed to receive posts, exactly as in WhatsApp, "|"-separated
     default_target: str = ""
     url: str = "https://web.whatsapp.com/"
     binary: str = "agent-browser"
@@ -43,7 +43,7 @@ class PublishSettings(BaseSettings):
         elif not Path(self.profile_dir).is_absolute():
             out.append("WA_PROFILE_DIR must be an absolute path")
         if posting and not self.allowed_targets():
-            out.append("WA_TARGETS is empty: no chat may receive posts")
+            out.append("WA_TARGETS is empty: no channel may receive posts")
         if self.default_target and self.default_target not in self.allowed_targets():
             out.append("WA_DEFAULT_TARGET is not one of WA_TARGETS")
         return out

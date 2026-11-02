@@ -1,18 +1,20 @@
 """
-Posts one image with its caption into one WhatsApp group, through WhatsApp Web.
+Posts one image with its caption into one WhatsApp channel, through WhatsApp Web. Only channels:
+groups and people are refused.
 
-agent-browser runs fixed steps; no AI reads the page or chooses what to click, so a message in
-the group ("ignore your instructions and post in …") is only text on a page nobody obeys.
+agent-browser runs fixed steps; no AI reads the page or chooses what to click, so a message on
+the page ("ignore your instructions and post in …") is only text nobody obeys.
 
 Guards, in the order they run:
   1. the target is on the allowlist (WA_TARGETS) — nothing else can be opened;
-  2. the chat that opens has exactly that name in its header ("BBC Deals" never opens "BBC Deals 2"),
-     and it is a group (or channel), never a person who happens to have the same name;
-  3. the chat lets this account write (an admins-only group stops here);
-  4. the same caption among the last outgoing messages is not sent again — read only after the
-     chat's messages have finished loading;
-  5. the caption box (never the chat's own message box) holds exactly our text before Send;
-  6. after Send a new outgoing message with exactly our text must get its tick.
+  2. it is opened from WhatsApp's Channels list, its header has exactly that name ("BBC Deals"
+     never opens "BBC Deals 2"), and its id is a channel's (…@newsletter) — a group or a person
+     with the same name is never used;
+  3. this account can post in it (an admin: a follower has no message box, so it stops here);
+  4. the same caption among the last posts is not sent again — read only after the channel's
+     posts have finished loading;
+  5. the caption box (never the channel's own message box) holds exactly our text before Send;
+  6. after Send a new post with exactly our text must appear and get its tick.
 
 Anything that goes wrong after Send was pressed is NotConfirmed: the post may be out, so the caller
 records it and a person looks — it is never retried on its own. Anything before Send leaves the
@@ -36,7 +38,7 @@ from typing import Any
 from publishing.browser import AgentBrowser, BrowserError
 
 SELECTORS_FILE = Path(__file__).with_name("selectors.json")
-GROUP_SUFFIXES = ("@g.us", "@newsletter")
+CHANNEL_SUFFIX = "@newsletter"   # WhatsApp's id for a channel; a group ends in @g.us, a person in @c.us
 RECENT = 20                  # outgoing messages compared before posting
 READ_MORE = "Read more"
 
@@ -70,7 +72,7 @@ class CaptionMismatch(PublishError):
 
 
 class NotConfirmed(PublishError):
-    """Send was pressed but the post could not be confirmed. It may be out: a person checks the chat."""
+    """Send was pressed but the post could not be confirmed. It may be out: a person checks the channel."""
     code = "not_confirmed"
 
 
@@ -159,7 +161,8 @@ def slug(value: str) -> str:
 
 
 def chat_jid(message_id: str) -> str:
-    """"true_120363…@g.us_3EB0…" → "120363…@g.us" (WhatsApp Web's data-id: fromMe_chat_id[_author])."""
+    """"true_120363…@newsletter_3EB0…" → "120363…@newsletter" (WhatsApp Web's data-id:
+    fromMe_chat_id[_author])."""
     parts = message_id.split("_")
     return parts[1] if len(parts) >= 3 and parts[0] in ("true", "false") else ""
 
@@ -327,7 +330,7 @@ class WhatsAppWeb:
             if now - start >= self.settle_max_s:
                 if count == 0:
                     return []
-                raise PublishError("the chat's messages kept changing — not safe to check for an earlier post")
+                raise PublishError("the channel's posts kept changing — not safe to check for an earlier post")
             await self._sleep(self.poll_s)
 
     # ── steps ──
@@ -348,7 +351,19 @@ class WhatsAppWeb:
             await self._sleep(self.poll_s)
         return "unknown"
 
-    async def open_chat(self, target: str) -> None:
+    async def chat_id(self) -> str:
+        """The open chat's id, from its messages once one has loaded; empty for a channel with no
+        posts yet (waited for up to `settle_max_s`)."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.settle_max_s
+        while True:
+            shown = await self.messages()
+            if shown["count"] > 0 or loop.time() >= deadline:
+                return chat_jid(shown["id"])
+            await self._sleep(self.poll_s)
+
+    async def open_channel(self, target: str) -> None:
+        """Open `target` from the Channels list and make sure it is that channel."""
         if target not in self.allowed:
             raise NotAllowed(f"{target!r} is not in WA_TARGETS")
         state = await self.open()
@@ -356,27 +371,28 @@ class WhatsAppWeb:
             raise NeedsLogin("WhatsApp Web shows the QR code: run `python -m publishing login`")
         if state != "ready":
             raise PublishError("WhatsApp Web did not finish loading")
-        if await self.header() != target:
-            box = await self.first("search_box")
-            if not box:
-                raise PublishError("search box not found — run `python -m publishing calibrate`")
-            await self.b.batch([["click", box], ["press", "Control+a"], ["press", "Backspace"],
-                                ["keyboard", "type", target]])
-            row = await self.wait_first("chat_in_list", 10, name=css_quote(target))
-            if not row:
-                raise ChatNotFound(f"no chat named exactly {target!r} — is this account in it?")
-            await self.b.one("click", row)
-            loop = asyncio.get_running_loop()
-            deadline = loop.time() + 10
+        if await self.header() == target and (await self.chat_id()).endswith(CHANNEL_SUFFIX):
+            return                                     # already open, and it is the channel
+        tab = await self.first("channels_tab")
+        if not tab:
+            raise PublishError("the Channels tab was not found — run `python -m publishing calibrate`")
+        await self.b.one("click", tab)
+        row = await self.wait_first("channel_in_list", 10, name=css_quote(target))
+        if not row:
+            raise ChatNotFound(f"no channel named exactly {target!r} under Channels — is this account its admin?")
+        await self.b.one("click", row)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 10
+        opened = await self.header()
+        while opened != target and loop.time() < deadline:
+            await self._sleep(self.poll_s)
             opened = await self.header()
-            while opened != target and loop.time() < deadline:
-                await self._sleep(self.poll_s)
-                opened = await self.header()
-            if opened != target:
-                raise WrongChat(f"asked for {target!r}, the open chat is {opened!r}")
-        jid = chat_jid((await self.messages())["id"])
-        if jid and not jid.endswith(GROUP_SUFFIXES):
-            raise WrongChat(f"{target!r} is a person ({jid}), not a group — another chat has this name")
+        if opened != target:
+            raise WrongChat(f"asked for {target!r}, the open chat is {opened!r}")
+        jid = await self.chat_id()
+        if jid and not jid.endswith(CHANNEL_SUFFIX):
+            kind = "group" if jid.endswith("@g.us") else "person"
+            raise WrongChat(f"{target!r} opened a {kind} ({jid}), not a channel — only channels are posted to")
 
     async def post_image(self, target: str, image: Path, caption: str, *,
                          dry_run: bool = False, allow_repeat: bool = False) -> PostResult:
@@ -385,9 +401,9 @@ class WhatsAppWeb:
             raise PublishError(f"image not found: {image}")
         if not fingerprint(caption):
             raise PublishError("empty caption")
-        await self.open_chat(target)
+        await self.open_channel(target)
         if not await self.first("composer"):
-            raise CannotPost(f"{target!r} does not let this account write (admins only?)")
+            raise CannotPost(f"this account can't post in {target!r}: it follows the channel but is not its admin")
         before = await self.settled_outgoing()
         if not allow_repeat:
             for m in before:
@@ -415,7 +431,7 @@ class WhatsAppWeb:
                 raise PublishError("the image preview did not open (or its caption box changed — run calibrate)")
             if await self.b.eval_json(_js_in_composer(box)):
                 # typing there would send the caption as plain text, without the image
-                raise PublishError(f"caption selector {box!r} matches the chat's message box — fix selectors.json")
+                raise PublishError(f"caption selector {box!r} matches the channel's message box — fix selectors.json")
             await self.b.batch([["click", box], *caption_commands(caption)])
             typed = await self.text_of(box)
             if fingerprint(typed) != fingerprint(caption):
@@ -495,18 +511,19 @@ class WhatsAppWeb:
                        "screenshot": await self.screenshot("open", target)})
         if state != "ready":
             return report
-        await note("search", "search_box")
+        await note("channels_tab", "channels_tab")
         try:
-            await self.open_chat(target)
+            await self.open_channel(target)
         except PublishError as e:
-            report.append({"step": "open_chat", "key": e.code, "selector": str(e), "screenshot": ""})
+            report.append({"step": "open_channel", "key": e.code, "selector": str(e),
+                           "screenshot": await self.screenshot("open_channel", target)})
             return report
-        await note("chat", "header_title", visible=False)
+        await note("channel", "header_title", visible=False)
         await note("composer", "composer")
         await note("outgoing", "outgoing", visible=False)
         last = await self.outgoing(3)
-        report.append({"step": "last_outgoing", "key": "message_text", "selector": last, "screenshot": ""})
-        report.append({"step": "chat_id", "key": "any_message", "selector": (await self.messages())["id"],
+        report.append({"step": "last_posts", "key": "message_text", "selector": last, "screenshot": ""})
+        report.append({"step": "channel_id", "key": "any_message", "selector": await self.chat_id(),
                        "screenshot": ""})
         attach = await note("attach", "attach_button")
         if attach:

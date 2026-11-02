@@ -1,16 +1,17 @@
 """
-python -m publishing <command>      WhatsApp Web through agent-browser, fixed steps, no AI at the wheel
+python -m publishing <command>      posts to a WhatsApp channel through WhatsApp Web and agent-browser,
+                                    fixed steps, no AI at the wheel; groups and people are refused
 
   status                                   is WhatsApp Web logged in on this profile?
   login [--telegram]                       show the QR code (a PNG, or sent to WA_LOGIN_CHAT_ID) until scanned
-  calibrate --target NAME                  which selectors match on the real page, a screenshot per step
-  send --target NAME --image F --caption-file T [--dry-run] [--allow-repeat]
+  calibrate --target CHANNEL               which selectors match on the real page, a screenshot per step
+  send --target CHANNEL --image F --caption-file T [--dry-run] [--allow-repeat]
                                            post one image by hand (tests, calibration)
-  post CAMPAIGN_ID [--target NAME] [--dry-run]
-                                           post an approved campaign, at most once per chat  (railway run)
-  forget CAMPAIGN_ID --target NAME --checked
+  post CAMPAIGN_ID [--target CHANNEL] [--dry-run]
+                                           post an approved campaign, at most once per channel  (railway run)
+  forget CAMPAIGN_ID --target CHANNEL --checked
                                            clear an "unconfirmed" or unfinished record after you looked
-                                           at the chat and the post is not there                (railway run)
+                                           at the channel and the post is not there             (railway run)
 
 Nothing is posted unless WA_ENABLED=true; --dry-run stops right before Send and needs no switch.
 """
@@ -42,7 +43,7 @@ def stop(message: str) -> None:
 def show(result: PostResult) -> None:
     print(result.to_json())
     if result.status == "unconfirmed":
-        stop("Send was pressed but the post could not be confirmed. Look at the chat: if the post is not "
+        stop("Send was pressed but the post could not be confirmed. Look at the channel: if the post is not "
              "there, run `python -m publishing forget …`; it is not retried on its own.")
 
 
@@ -160,7 +161,7 @@ async def cmd_forget(args, ws, wa) -> None:
     from publishing.publish import forget
 
     if not args.checked:
-        stop("look at the chat first; add --checked to confirm the post is not there")
+        stop("look at the channel first; add --checked to confirm the post is not there")
     previous = await _with_store(lambda store: forget(store, args.campaign_id, _target(args, ws)))
     print(f"✓ cleared (was: {previous or 'nothing recorded'})")
 
