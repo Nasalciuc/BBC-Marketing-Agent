@@ -13,12 +13,20 @@ def review_keyboard(campaign_id: str) -> dict:
                 {"text": "✅ Approve", "callback_data": f"approve_{campaign_id}"},
                 {"text": "❌ Reject", "callback_data": f"reject_{campaign_id}"},
             ],
-            [
-                {"text": "✏️ Edit caption", "callback_data": f"edit_{campaign_id}"},
-                {"text": "🔄 Regenerate", "callback_data": f"regen_{campaign_id}"},
-            ],
+            [{"text": "✏️ Edit caption", "callback_data": f"edit_{campaign_id}"}]
+            + (
+                [{"text": "🔄 Regenerate", "callback_data": f"regen_{campaign_id}"}]
+                if _regen_enabled()
+                else []
+            ),
         ]
     }
+
+
+def _regen_enabled() -> bool:
+    from config import settings
+
+    return settings.legacy_regen_enabled
 
 
 def approved_keyboard(campaign_id: str) -> dict:

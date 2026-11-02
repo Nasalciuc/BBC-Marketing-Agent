@@ -73,26 +73,28 @@ async def handle_ai_message(chat_id: int, user_id: int, text: str):
     elif intent == "APPROVE":
         campaign_id = context.get("current_campaign_id")
         if campaign_id:
-            from services.sheets_client import update_deal_status
-            from services.supabase_client import update_campaign_status
+            from handlers.review import review_reply, set_review_status
 
-            update_deal_status(campaign_id, "approved")
-            await update_campaign_status(campaign_id, "approved")
-            await send_message(chat_id=chat_id, text=f"✅ Approved *{campaign_id}*")
-            await clear_context(chat_id)
+            outcome, current = await set_review_status(campaign_id, "approved")
+            await send_message(
+                chat_id=chat_id, text=review_reply(outcome, current, f"✅ Approved *{campaign_id}*")
+            )
+            if outcome in ("done", "same", "locked"):
+                await clear_context(chat_id)
         else:
             await send_message(chat_id=chat_id, text="✅ Ce deal aprobi? Trimite /deals.")
 
     elif intent == "REJECT":
         campaign_id = context.get("current_campaign_id")
         if campaign_id:
-            from services.sheets_client import update_deal_status
-            from services.supabase_client import update_campaign_status
+            from handlers.review import review_reply, set_review_status
 
-            update_deal_status(campaign_id, "rejected")
-            await update_campaign_status(campaign_id, "rejected")
-            await send_message(chat_id=chat_id, text=f"❌ Rejected *{campaign_id}*")
-            await clear_context(chat_id)
+            outcome, current = await set_review_status(campaign_id, "rejected")
+            await send_message(
+                chat_id=chat_id, text=review_reply(outcome, current, f"❌ Rejected *{campaign_id}*")
+            )
+            if outcome in ("done", "same", "locked"):
+                await clear_context(chat_id)
         else:
             await send_message(chat_id=chat_id, text="❌ Ce deal respingi? Trimite /deals.")
 
@@ -115,15 +117,16 @@ async def handle_ai_message(chat_id: int, user_id: int, text: str):
     elif intent == "SCHEDULE":
         campaign_id = context.get("current_campaign_id")
         if campaign_id:
-            from services.sheets_client import update_deal_status
-            from services.supabase_client import update_campaign_status
+            from handlers.review import review_reply, set_review_status
 
-            update_deal_status(campaign_id, "approved")
-            await update_campaign_status(campaign_id, "approved")
+            outcome, current = await set_review_status(campaign_id, "approved")
+            scheduled = f"⏰ *{campaign_id}* → Monday 10:00 UTC"
             await send_message(
-                chat_id=chat_id, text=f"⏰ *{campaign_id}* → Monday 10:00 UTC"
+                chat_id=chat_id,
+                text=scheduled if outcome == "same" else review_reply(outcome, current, scheduled),
             )
-            await clear_context(chat_id)
+            if outcome in ("done", "same", "locked"):
+                await clear_context(chat_id)
         else:
             await send_message(chat_id=chat_id, text="⏰ Ce deal programezi? Trimite /deals.")
 

@@ -1,0 +1,128 @@
+# W42 · 14–18 October 2026 — the five posts as they were sent to Telegram on 9 October
+# (public.campaigns, checked with md5 on 15 October). The reference week: a test checks that the
+# content system rebuilds exactly these five captions.
+# Its campaign ids (2026-W42-V4-00n) already exist in Supabase, so `send` refuses this file on purpose.
+
+week = "2026-W42"
+photos = "assets/curated/week_2026_10_12"
+id_tag = "V4"
+
+[[post]]
+day = 2026-10-14
+photo = "singapore_airlines"
+label = "Singapore Airlines"
+name = "Singapore Airlines — World's Best Airline 2026 (Skytrax)"
+city = "Singapore"
+caption_city = "Singapore"
+route = "New York → Singapore"
+body = '''
+The world's best airline. For the sixth time.
+
+Skytrax announced its 2026 World Airline Awards in London, after a year of surveys in which more than 24 million travellers rated over 300 airlines. Singapore Airlines was named the World's Best Airline for the sixth time, and the Best Airline in Asia.
+
+The longest nonstop flight in the world, with the airline that does it best. And on this aircraft there is no economy class: sixty-seven business seats, and nothing below premium economy.
+
+Business class, New York to Singapore, nonstop. Leave at ten at night. Dinner, then a full night in a flat bed. Land before sunrise, with much of Southeast Asia a short hop away.'''
+
+[post.design]
+style = "fact"
+lead = "Six times"
+follow = "the world’s best airline."
+line = "Singapore Airlines · Skytrax 2026"
+
+[[post]]
+day = 2026-10-15
+photo = "beaune"
+label = "Hospices de Beaune"
+name = "Hospices de Beaune wine auction 2026"
+city = "Beaune, France"
+caption_city = "Paris"
+route = "JFK → CDG"
+dates_start = 2026-11-15
+dates_end = 2026-11-15
+body = '''
+In Beaune, one barrel is still sold the old way: the bidding ends when the candles burn out.
+
+The 166th Hospices de Beaune wine auction, Sunday 15 November, under the Halles de Beaune, with Sotheby's. Held since 1859 for the hospital founded here in 1443: barrels from the Hospices' own vineyards, most of them Premiers and Grands Crus, bid for by collectors from Europe, Asia and America; last year the average barrel went for 34,000 euros. Around it, Burgundy's great weekend: the Tastevin dinner at the Clos de Vougeot on Saturday, the sale on Sunday, the Paulée de Meursault on Monday. Les Trois Glorieuses.
+
+A month away. One flight.
+
+Business class, New York to Paris. Leave at 6:30pm. Sleep. Land at 8am, and be in Beaune for a late lunch: about two hours from Paris by fast train. The cellars pour all weekend.'''
+
+[post.design]
+style = "offer"
+headline = "Beaune. One weekend. All of Burgundy."
+tag = "Hospices de Beaune · 15 Nov"
+to_iata = "CDG"
+
+[[post]]
+day = 2026-10-16
+photo = "cape_town"
+label = "Cape Town"
+name = "Cape Town — summer from November"
+city = "Cape Town"
+caption_city = "Cape Town"
+route = "New York → Cape Town"
+body = '''
+While New York turns cold, Cape Town turns to summer.
+
+November on the Cape: light until almost eight in the evening, Table Mountain above the city, a house on the rocks at Clifton with the Atlantic below it, and lunch in the vines at Stellenbosch, under an hour away. The morning call in New York is your afternoon here. Thanksgiving week, on the Cape, is summer.
+
+One night. One flight.
+
+Business class, New York to Cape Town, nonstop from Newark. Leave at half past eight in the evening. Sleep. Land the next day before sunset.'''
+
+[post.design]
+style = "editorial"
+big_headline = true
+headline = "Cape Town. Summer, a night away."
+line = "Business class from New York · November"
+
+[[post]]
+day = 2026-10-17
+photo = "sao_paulo"
+label = "F1 São Paulo"
+name = "F1 São Paulo Grand Prix 2026"
+city = "São Paulo"
+caption_city = "São Paulo"
+route = "JFK → GRU"
+dates_start = 2026-11-06
+dates_end = 2026-11-08
+body = '''
+Ayrton Senna won here twice. The first time, he finished with only sixth gear left.
+
+The São Paulo Grand Prix, Interlagos, 6 to 8 November: South America's only race of the season, and one of the last four. Seventy-one laps on Sunday at two in the afternoon, a circuit that dives downhill into the Senna S, and a crowd that turns the bowl into a wall of sound. On Sunday, the helicopter from Faria Lima leaves at eleven and puts you down beside the circuit.
+
+Three weeks away. One flight.
+
+Business class, New York to São Paulo, nonstop. Leave at ten at night. Sleep. Land by mid-morning. Zero days lost — and one of the lowest long-haul business fares we have this season.'''
+
+[post.design]
+style = "offer"
+headline = "Interlagos. Senna's\u00A0home. The final stretch."
+tag = "F1 São Paulo · 6–8 Nov"
+to_iata = "GRU"
+
+[[post]]
+day = 2026-10-18
+photo = "europe"
+label = "Europe one way"
+name = "Europe one way — Paris, London, Rome"
+city = "Paris, London, Rome"
+caption_city = "Paris"
+route = "JFK → CDG · LHR · FCO (one way)"
+body = '''
+Not every trip needs a return date.
+
+One-way business class from New York to Europe. The fare above is the lowest of the three; the other two are close behind. For the trip that starts as a meeting and ends as a week in the south of France, for the long stay, for the second leg you haven't planned yet.
+
+One seat. One direction. Your timing.
+
+Business class, New York to Paris. Leave at 6:30pm. Sleep. Land at 8am. Breakfast in Paris — and come home whenever you're ready.'''
+
+[post.design]
+style = "price_hero"
+fare_iatas = ["CDG", "LHR", "FCO"]
+trip = "one_way"
+follow = "One way to Paris, London or Rome."
+line = "Business class from New York"
