@@ -22,7 +22,7 @@ from langchain.agents.middleware import (
     ToolCallLimitMiddleware,
     ToolErrorMiddleware,
     after_model,
-    before_model,
+    before_agent,
 )
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
 from langchain_core.messages import (
@@ -53,6 +53,7 @@ log = logging.getLogger("bbc.content.assistant")
 MODEL_CALLS = 8
 TOOL_CALLS = 6
 LEASE_WAIT_S = 60.0
+RUN_TIMEOUT_S = 300.0        # well inside the chat lease (LEASE_TTL_S, 600 s): no two runs on one chat
 STILL_WORKING_S = 25.0
 TELEGRAM_TEXT = 4096
 
@@ -95,7 +96,9 @@ def answered(messages: list[Any]) -> list[Any]:
 
 
 def _history(limit: int):
-    @before_model
+    # once per message, before the run: trimming before every model call could cut the current
+    # message itself out of a long run and leave the model nothing to answer
+    @before_agent
     def keep_recent(state: dict, runtime: Any) -> dict | None:
         messages = state["messages"]
         kept = answered(trim_messages(messages, strategy="last", token_counter=len, max_tokens=limit,
@@ -117,8 +120,10 @@ def _tool_failed(exc: Exception, request: Any) -> str:
 def _metered(default_model: str):
     @after_model
     def count(state: dict, runtime: Any) -> None:
-        last = state["messages"][-1] if state.get("messages") else None
-        if isinstance(last, AIMessage) and runtime.context is not None:
+        # the model's reply is the newest AIMessage: other after_model hooks (the tool limit) may
+        # already have put ToolMessages after it
+        last = next((m for m in reversed(state.get("messages") or []) if isinstance(m, AIMessage)), None)
+        if last is not None and runtime.context is not None:
             runtime.context.meter.add_message(last, default_model)
         return None
 
@@ -211,14 +216,18 @@ class Assistant:
         try:
             async with store.lease(f"chat:{chat_id}", wait=LEASE_WAIT_S):
                 keepalive = asyncio.create_task(self._keepalive(chat_id))
-                out = await self.agent.ainvoke(
-                    {"messages": [HumanMessage(content=f"{note}\n{text}")]},
-                    {"configurable": {"thread_id": f"chat:{chat_id}"}, "recursion_limit": 150},
-                    context=ctx)
+                async with asyncio.timeout(RUN_TIMEOUT_S):
+                    out = await self.agent.ainvoke(
+                        {"messages": [HumanMessage(content=f"{note}\n{text}")]},
+                        {"configurable": {"thread_id": f"chat:{chat_id}"}, "recursion_limit": 150},
+                        context=ctx)
             answer = reply_text(out["messages"][-1]) if out.get("messages") else ""
             await self._say(chat_id, answer or "Gata.", message_id)
         except LeaseBusy:
             await self._say(chat_id, BUSY, message_id)
+        except TimeoutError:
+            log.warning("assistant run on chat %s stopped after %.0f s", chat_id, RUN_TIMEOUT_S)
+            await self._say(chat_id, TOO_LONG, message_id, menu=True)
         except ModelCallLimitExceededError:
             log.warning("assistant stopped at %s model calls on a message from chat %s", MODEL_CALLS, chat_id)
             await self._say(chat_id, TOO_LONG, message_id, menu=True)

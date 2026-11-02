@@ -5,8 +5,10 @@ FastAPI minimal care:
 2. Primește callbacks Telegram (approve/reject deals)
 3. Pornește MEREU, chiar dacă nu toate keys sunt setate
 """
+import asyncio
 import hmac
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -20,12 +22,27 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("bbc.webhook")
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    # a redeploy: let the assistant finish the messages it already took (Railway waits before killing)
+    import sys
+
+    router = sys.modules.get("content_system.assistant.router")
+    if router is not None:
+        try:
+            await asyncio.wait_for(router.drain(), timeout=25)
+        except TimeoutError:
+            log.warning("shutdown: assistant messages still running after 25 s")
+
+
 app = FastAPI(
     title="BBC Marketing Agent",
     version="1.0.0",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
+    lifespan=lifespan,
 )
 
 
@@ -130,9 +147,17 @@ async def telegram_webhook(request: Request):
 
             await handle_reject(campaign_id, callback_id, chat_id, message_id)
         elif action == "edit":
-            from handlers.review import handle_edit_caption
+            from content_system.settings import get_settings as content_settings
 
-            await handle_edit_caption(campaign_id, callback_id, chat_id)
+            if content_settings().assistant_on:
+                # the old flow waits for the next text, which now goes to the assistant: don't start it
+                from services.telegram_client import answer_callback_query
+
+                await answer_callback_query(callback_id, "✏️ Scrie-mi ce schimb în text (răspunde la postare)")
+            else:
+                from handlers.review import handle_edit_caption
+
+                await handle_edit_caption(campaign_id, callback_id, chat_id)
         elif action == "regen":
             from handlers.review import handle_regenerate
 

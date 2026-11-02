@@ -153,6 +153,27 @@ def test_a_card_is_used_once_even_when_two_taps_race(pg, tmp_path):
     assert run(expired()) == (("expired", None), ("missing", None))
 
 
+def test_two_buttons_of_one_card_racing_decide_once(pg, tmp_path):
+    """Found in review: "❌ A" and "❌ toate" tapped together both won (each row was open on its own).
+    The card's rows are now taken in one transaction."""
+    async def go():
+        db, services, *_ = await system(pg, tmp_path)
+        store, outcomes = services.store, []
+        try:
+            items = [{"campaign_id": "2026-W45-V4-001", "version": 1}]
+            for i in range(20):
+                group, one, every = f"g{i:011d}", f"a{i:011d}", f"b{i:011d}"
+                await store.add_proposal(one, group, CHAT, "reject", items)
+                await store.add_proposal(every, group, CHAT, "reject", items)
+                got = await asyncio.gather(store.take_proposal(one), store.take_proposal(every))
+                outcomes.append(tuple(sorted(o for o, _ in got)))
+            return outcomes
+        finally:
+            await db.close()
+
+    assert set(run(go())) == {("dismissed", "taken")}
+
+
 def test_ideas_usage_and_reviewed_posts_on_postgres(pg, tmp_path):
     async def go():
         db, services, tg, graph = await system(pg, tmp_path)

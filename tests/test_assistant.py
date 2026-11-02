@@ -101,9 +101,11 @@ def env(tmp_path, monkeypatch):
     bridge.use(lv)
 
     def assistant(*replies: Any, writer: Writer | None = None, fallback: list[Any] | None = None) -> Assistant:
-        a = Assistant(lv, model=Script(replies=list(replies), seen=[]),
+        model = Script(replies=list(replies), seen=[])
+        a = Assistant(lv, model=model,
                       fallback=Script(replies=list(fallback or [RuntimeError("fallback down")]), seen=[]),
                       writer=writer or Writer(), checkpointer=InMemorySaver())
+        a.script = model                      # what the model was shown, call by call
         router.use(a)
         return a
 
@@ -340,7 +342,7 @@ def test_a_draft_with_an_invented_fact_is_written_again(env):
     w = Writer("Cape Town from 5 November, summer a night away.", "Cape Town, summer a night away.")
     a = env.assistant(call("rewrite_caption", 1, campaign_id=CAPE, request="mai scurt"), say("Gata, v2."), writer=w)
     run(a.handle(CHAT, 1, "mai scurt la Cape Town", update_id=1))
-    assert "neither in the post nor in the request: 5" in w.prompts[1]
+    assert "neither in the post nor in her message: 5" in w.prompts[1]
     assert run(view(env.graph, CAPE)).values["caption"].startswith("Cape Town, summer a night away.")
 
 
@@ -363,7 +365,7 @@ def test_exact_text_must_be_in_her_message(env):
     v = run(view(env.graph, CAPE))
     assert v.version == 2 and v.values["caption"].startswith("Summer on the Cape, a night away.")
     first = [m for m in history(a) if isinstance(m, ToolMessage)][0].content
-    assert first.startswith("refused: that text is not, word for word, in her message")
+    assert first.startswith("refused: that text is not, character for character, in her message")
 
 
 def test_aprob_only_shows_a_card(env):
@@ -493,3 +495,162 @@ def test_assistant_off_keeps_the_old_paths(tmp_path, monkeypatch):
     assert handled and run(view(graph, CAPE)).version == 2       # PR-1 behaviour: a reply to the post edits it
     bridge.use(None)
     get_settings.cache_clear()
+
+
+# ── found by the independent review (each failed before its fix) ────────────
+
+def test_the_fact_check_trusts_her_words_not_the_models_paraphrase(env):
+    """The model put a date into `request`; only what Betty wrote may add a fact."""
+    w = Writer("Cape Town on 12 December, summer a night away.", "Cape Town on 12 December, summer a night away.")
+    a = env.assistant(call("rewrite_caption", 1, campaign_id=CAPE, request="mai scurt; zborul e pe 12 decembrie"),
+                      say("N-a mers."), writer=w)
+    run(a.handle(CHAT, 1, "fă-l mai scurt", update_id=1))
+    assert run(view(env.graph, CAPE)).version == 1
+    assert "neither in the post nor in her message: 12, dec" in w.prompts[1]
+
+
+def test_a_rewrite_never_overwrites_a_version_made_meanwhile(env):
+    """Her ✏️ reply landed while the writer was drafting from v1: the draft must not replace her v2."""
+    from content_system.engine import decide
+
+    class SlowWriter(Writer):
+        async def __call__(self, messages):
+            await decide(env.graph, env.lv.services, CAPE, "edit", caption="Summer on the Cape, a night away.")
+            return await super().__call__(messages)
+
+    a = env.assistant(call("rewrite_caption", 1, campaign_id=CAPE, request="mai scurt"), say("…"),
+                      writer=SlowWriter("While New York turns cold, Cape Town turns to summer."))
+    ctx = run(a.handle(CHAT, 1, "mai scurt", update_id=1))
+    v = run(view(env.graph, CAPE))
+    assert v.version == 2 and v.values["caption"].startswith("Summer on the Cape, a night away.")
+    assert ctx.done == []
+
+
+def test_number_words_and_weekday_forms_are_facts():
+    cape = week42().posts[2].caption
+    assert "half past eight" in cape
+    assert invented(cape.replace("half past eight", "half past nine"), cape) == ["9"]
+    assert invented("Departs Sat.", cape) == ["sat"]
+    assert invented("Fridays only.", cape) == ["fri"]
+    assert invented("Departs Mon and Thu.", cape) == ["mon", "thu"]
+    assert invented("One weekend, all of it.", cape) == []                  # "one" is not counted
+    assert invented("At nine.", cape, "pune ora nouă") == []                # she said nine
+
+
+def test_a_card_on_v1_never_completes_a_failed_approve_of_v2(env):
+    from content_system.engine import decide
+
+    run(router.route_message(message(texts.MENU_TODO, 1), 1))
+    cape_button = next(d for t, d in buttons(last_card(env.tg)) if "Cape Town" in t)
+    run(decide(env.graph, env.lv.services, CAPE, "edit", caption="Summer on the Cape, a night away."))
+    real = env.store.decide
+
+    async def down(*args, **kwargs):
+        raise ConnectionError("db down")
+
+    env.store.decide = down
+    with pytest.raises(ConnectionError):
+        run(decide(env.graph, env.lv.services, CAPE, "approve", version=2))
+    env.store.decide = real
+    run(router.route_card(tap(cape_button, 2), 2))
+    assert env.store.campaigns[CAPE]["status"] == "draft"
+    assert "That was v1; the latest is v2" in env.tg.sent("editMessageText")[-1][1]["text"]
+
+
+def test_a_redelivered_menu_tap_makes_one_card(env):
+    run(router.route_message(message(texts.MENU_TODO, 7), 7))
+    run(router.route_message(message(texts.MENU_TODO, 7), 7))
+    cards = [c for c in env.tg.sent("sendMessage") if "inline_keyboard" in (c[1].get("reply_markup") or {})]
+    assert len(cards) == 1
+
+
+def test_every_model_call_is_metered_even_when_its_tool_calls_are_blocked(env):
+    many = [AIMessage(content="", tool_calls=[{"name": "week_overview", "args": {}, "id": f"m{n}{k}"} for k in range(3)],
+                      usage_metadata={"input_tokens": 100, "output_tokens": 10, "total_tokens": 110},
+                      response_metadata={"model_name": "claude-haiku-5-5"}) for n in range(4)]
+    a = env.assistant(*many, say("gata"))
+    run(a.handle(CHAT, 1, "tot", update_id=1))
+    made = sum(1 for m in history(a) if isinstance(m, AIMessage) and m.usage_metadata)
+    assert made == 5 and env.store.usage[next(iter(env.store.usage))]["calls"] == 5
+
+
+def test_a_long_run_keeps_her_message_in_view(env, monkeypatch):
+    """Trimming before every model call cut the current message out of a long run."""
+    monkeypatch.setattr(env.lv.settings, "assistant_history", 6)
+    wide = [AIMessage(content="", tool_calls=[{"name": "week_overview", "args": {}, "id": f"w{n}{k}"} for k in range(2)],
+                      response_metadata={"model_name": "claude-haiku-5-5"}) for n in range(3)]
+    a = env.assistant(*wide, say("gata"))
+    run(a.handle(CHAT, 1, "spune tot", update_id=1))
+    assert len(a.script.seen) == 4
+    assert all(any(m.type == "human" and m.content.endswith("spune tot") for m in seen) for seen in a.script.seen)
+    assert texts_to(env.tg)[-1] == "gata"
+
+
+def test_a_run_that_takes_too_long_is_stopped(env, monkeypatch):
+    import content_system.assistant.agent as agent_mod
+
+    class Stuck(Writer):
+        async def __call__(self, messages):
+            await asyncio.sleep(5)
+            return await super().__call__(messages)
+
+    monkeypatch.setattr(agent_mod, "RUN_TIMEOUT_S", 0.3)
+    a = env.assistant(call("rewrite_caption", 1, campaign_id=CAPE, request="mai scurt"), say("…"), writer=Stuck("x"))
+    run(a.handle(CHAT, 1, "mai scurt", update_id=1))
+    assert texts_to(env.tg)[-1] == texts.TOO_LONG and run(view(env.graph, CAPE)).version == 1
+
+
+def test_exact_text_keeps_her_line_breaks(env):
+    """Found in review: the check ignored whitespace but stored the model's string — her paragraphs went."""
+    exact = "Summer on the Cape.\n\nA night away."
+    a = env.assistant(call("use_exact_text", 1, campaign_id=CAPE, text="Summer on the Cape. A night away."),
+                      call("use_exact_text", 2, campaign_id=CAPE, text=exact), say("Gata."))
+    run(a.handle(CHAT, 1, "pune exact:\n" + exact, update_id=1))
+    assert [m.content for m in history(a) if isinstance(m, ToolMessage)][0].startswith("refused")
+    assert run(view(env.graph, CAPE)).values["caption"].startswith(exact)
+
+
+def test_one_message_sends_one_note_to_scaler(env):
+    a = env.assistant(call("ask_scaler", 1, request="Schimbă poza la Cape Town"),
+                      call("ask_scaler", 2, request="Pune altă poză la Cape Town, te rog"), say("Trimis."))
+    run(a.handle(CHAT, 1, "schimbă poza la Cape Town", update_id=1))
+    assert len(texts_to(env.tg, OWNER)) == 1
+
+
+def test_cancel_on_a_post_changes_nothing(env, monkeypatch):
+    import supabase
+
+    def must_not_connect(*args, **kwargs):
+        raise AssertionError("the old /cancel reset every editing row")
+
+    monkeypatch.setattr(supabase, "create_client", must_not_connect)
+    caption = run(view(env.graph, CAPE)).values["caption"] + review_line(CAPE, 1)
+    handled = run(router.route_message(message("/cancel", 1, reply_to={"message_id": 1003, "from": BOT,
+                                                                       "caption": caption}), 1))
+    assert handled and texts_to(env.tg)[-1] == f"{CAPE}: nothing to cancel — nothing changed"
+
+
+def test_the_old_edit_button_does_not_start_the_old_flow_when_the_assistant_is_on(env, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import handlers.review as old
+    import services.telegram_client as tgc
+    import webhook
+    from config import settings
+
+    toasted = []
+
+    async def answer(callback_id, text=""):
+        toasted.append(text)
+
+    async def must_not_run(*args, **kwargs):
+        raise AssertionError("the old Edit flow started")
+
+    monkeypatch.setattr(settings, "telegram_webhook_secret", "s3cret")
+    monkeypatch.setattr(settings, "telegram_admin_ids", "1")
+    monkeypatch.setattr(tgc, "answer_callback_query", answer)
+    monkeypatch.setattr(old, "handle_edit_caption", must_not_run)
+    TestClient(webhook.app).post("/webhook/telegram", headers={"X-Telegram-Bot-Api-Secret-Token": "s3cret"},
+                                 json={"update_id": 3, "callback_query": {"id": "c", "data": "edit_2026-W42-V4-003",
+                                       "from": {"id": 1}, "message": {"message_id": 3, "chat": {"id": 1}}}})
+    assert toasted and toasted[0].startswith("✏️ Scrie-mi")

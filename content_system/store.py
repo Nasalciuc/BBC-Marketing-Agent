@@ -354,20 +354,28 @@ class PgStore:
             (proposal_id, group_id, chat_id, action, json.dumps(items)))
 
     async def take_proposal(self, proposal_id: str, max_age_s: float = PROPOSAL_TTL_S) -> tuple[str, dict | None]:
-        """Atomically ("taken", row) for the first tap; the rest of its group closes with it."""
-        row = await self._one(
-            "update proposals set status = 'used', used_at = now() "
-            "where id = %s and status = 'open' and created_at > now() - make_interval(secs => %s) "
-            "returning group_id, chat_id, action, items",
-            (proposal_id, max_age_s))
-        if row is not None:
-            await self._one("update proposals set status = 'dismissed' where group_id = %s and status = 'open'",
-                            (row["group_id"],))
-            return "taken", {**row, "items": list(row["items"]), "status": "used"}
-        cur = await self._one("select status from proposals where id = %s", (proposal_id,))
-        if cur is None:
-            return "missing", None
-        return ("expired" if cur["status"] == "open" else cur["status"]), None
+        """("taken", row) for the first tap on any button of a card; the whole card closes with it, in
+        one transaction holding the card's rows — two taps on two buttons of one card can't both win."""
+        async with self.pool.connection() as conn, conn.transaction():
+            rows = await (await conn.execute(
+                "select id, group_id, chat_id, action, items, status, "
+                "created_at > now() - make_interval(secs => %s) as fresh from proposals "
+                "where group_id = (select group_id from proposals where id = %s) order by id for update",
+                (max_age_s, proposal_id))).fetchall()
+            mine = next((r for r in rows if r["id"] == proposal_id), None)
+            if mine is None:
+                return "missing", None
+            if mine["status"] != "open":
+                return mine["status"], None
+            if not mine["fresh"]:
+                return "expired", None
+            await conn.execute(
+                "update proposals set status = case when id = %s then 'used' else 'dismissed' end, "
+                "used_at = case when id = %s then now() else used_at end "
+                "where group_id = %s and status = 'open'",
+                (proposal_id, proposal_id, mine["group_id"]))
+        return "taken", {"group_id": mine["group_id"], "chat_id": mine["chat_id"], "action": mine["action"],
+                         "items": list(mine["items"]), "status": "used"}
 
     async def dismiss_group(self, group_id: str) -> int:
         rows = await self._all(

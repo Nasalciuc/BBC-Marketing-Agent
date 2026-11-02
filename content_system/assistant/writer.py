@@ -102,26 +102,29 @@ def anthropic_writer(model: str, api_key: str) -> Generate:
     return generate
 
 
-def check(post: PostInfo, body: str, request: str) -> list[str]:
-    """What stops this body from becoming the next version — the same rules as a typed caption."""
+def check(post: PostInfo, body: str, her_message: str) -> list[str]:
+    """What stops this body from becoming the next version — the same rules as a typed caption, and
+    no fact that is neither in the post nor in Betty's own message (never the model's paraphrase)."""
     caption = caption_from_edit(body, Style(post.style), post.caption_city)
     problems = caption_problems(caption, post.campaign_id)
     if caption.strip() == post.caption.strip():
         problems.append("same text as the current version")
-    new = invented(caption, post.caption, request)
+    new = invented(caption, post.caption, her_message)
     if new:
-        problems.append("facts that are neither in the post nor in the request: " + ", ".join(new))
+        problems.append("facts that are neither in the post nor in her message: " + ", ".join(new))
     return problems
 
 
-async def rewrite(generate: Generate, post: PostInfo, request: str, meter: Meter) -> WriteResult:
+async def rewrite(generate: Generate, post: PostInfo, request: str, meter: Meter, *, her_message: str) -> WriteResult:
+    """`request` is how the assistant put her ask (it goes to the writer); `her_message` is what she
+    wrote, word for word — the only source of new facts the check accepts."""
     feedback, body, problems = "", "", []
     system = SystemMessage(SYSTEM.format(examples=examples()))
     for _ in range(ATTEMPTS):
         body, usage = await generate([system, HumanMessage(_prompt(post, request, feedback))])
         meter.add(usage.get("model", ""), usage.get("input_tokens", 0), usage.get("output_tokens", 0))
         body = body.strip()
-        problems = check(post, body, request)
+        problems = check(post, body, her_message)
         if not problems:
             return WriteResult(True, body)
         feedback = (f"Your previous draft:\n<<<\n{body}\n>>>\nIt can't be used: {'; '.join(problems)}. "

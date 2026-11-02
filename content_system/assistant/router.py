@@ -10,6 +10,7 @@ Everything here answers Betty itself and never raises into the webhook.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 
@@ -72,8 +73,17 @@ def is_idea_prompt(replied: dict) -> bool:
     return bool(mine and (replied.get("text") or "").startswith(texts.IDEA_MARK))
 
 
-async def menu(lv: Any, chat_id: int, text: str, reply_to: int | None) -> bool:
-    """The fixed buttons and commands. No AI."""
+def _is_menu(text: str) -> bool:
+    return text.startswith(("/start", "/help")) or text in texts.MENU
+
+
+async def menu(lv: Any, chat_id: int, text: str, reply_to: int | None, update_id: int | None = None) -> bool:
+    """The fixed buttons and commands. No AI. Each Telegram update once: a redelivered "✅ De aprobat"
+    would otherwise put a second live card in the chat."""
+    if not _is_menu(text):
+        return False
+    if update_id is not None and not await lv.services.store.claim(f"tg:update:{update_id}"):
+        return True
     keyboard = texts.menu_keyboard()
     if text.startswith("/start"):
         await _say(lv, chat_id, texts.WELCOME, markup=keyboard)
@@ -121,7 +131,15 @@ async def route_message(msg: dict, update_id: int | None) -> bool:
     replied = msg.get("reply_to_message") or None
     if text.startswith("/") and not text.startswith(("/start", "/help")):
         if replied and text.startswith("/cancel"):
-            return await bridge.handle_reply(msg, update_id)
+            if await bridge.handle_reply(msg, update_id):           # /cancel on the ✏️ prompt
+                return True
+            mark = bridge.ours(replied)
+            if mark:                                                # /cancel on a post: nothing to cancel
+                telegram = None
+                with contextlib.suppress(Exception):
+                    telegram = (await bridge.live()).services.telegram
+                await bridge._say(chat_id, f"{mark[0]}: nothing to cancel — nothing changed", here, telegram)
+                return True
         return False                                  # /status, /deals, /cancel: the old handlers
     try:
         lv = await bridge.live()
@@ -145,7 +163,7 @@ async def route_message(msg: dict, update_id: int | None) -> bool:
             elif replied.get("message_id") is not None:
                 ref = await lv.services.store.find_message(chat_id, replied["message_id"])
                 focus = ref["campaign_id"] if ref else None
-        if await menu(lv, chat_id, text, here):
+        if await menu(lv, chat_id, text, here, update_id):
             return True
     except Exception:
         log.exception("assistant routing failed")

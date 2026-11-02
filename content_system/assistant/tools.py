@@ -36,6 +36,7 @@ class Ctx:
     writer: Generate
     owner_chat_id: str = ""
     done: list[str] = field(default_factory=list)       # what changed, in order (logs, tests)
+    asked: bool = False                                  # one note to Scaler per message
     edited: set[str] = field(default_factory=set)        # posts given a new version by this message
     _posts: list[PostInfo] | None = None
 
@@ -56,9 +57,9 @@ def _unknown(campaign_id: str) -> str:
 async def _edit(ctx: Ctx, p: PostInfo, caption: str, how: str) -> str:
     if p.campaign_id in ctx.edited:
         return f"{p.campaign_id} already got a new version from this message — let her look at it first"
-    try:
+    try:   # on the version that was read: a newer one (her ✏️ reply meanwhile) is never overwritten
         out = await decide(ctx.lv.graph, ctx.lv.services, p.campaign_id, "edit", caption=caption,
-                           lock_timeout=ctx.lv.settings.lock_timeout_s)
+                           version=p.version, lock_timeout=ctx.lv.settings.lock_timeout_s)
     except LeaseBusy:
         return f"{p.campaign_id}: another change on this post is running — nothing changed, ask her to try again"
     ctx._posts = None
@@ -112,7 +113,7 @@ async def rewrite_caption(campaign_id: str, request: str, runtime: ToolRuntime[C
         return _unknown(campaign_id)
     if not p.waiting:
         return f"{p.short} is {p.status}: its caption can't change any more"
-    result = await rewrite(ctx.writer, p, request, ctx.meter)
+    result = await rewrite(ctx.writer, p, request, ctx.meter, her_message=ctx.text)
     if not result.ok:
         return f"{p.short}: nothing changed — two drafts failed the checks: {'; '.join(result.problems)}"
     return await _edit(ctx, p, result.body, "rewrite")
@@ -128,11 +129,11 @@ async def use_exact_text(campaign_id: str, text: str, runtime: ToolRuntime[Ctx])
         return _unknown(campaign_id)
     if not p.waiting:
         return f"{p.short} is {p.status}: its caption can't change any more"
-    wanted = " ".join(text.split())
-    if not wanted or wanted not in " ".join(ctx.text.split()):
-        return ("refused: that text is not, word for word, in her message. Use rewrite_caption for a "
-                "change she described, or ask her to send the exact text")
-    return await _edit(ctx, p, text.strip(), "exact")
+    wanted = text.strip()
+    if not wanted or wanted not in ctx.text:
+        return ("refused: that text is not, character for character, in her message. Use rewrite_caption "
+                "for a change she described, or ask her to send the exact text")
+    return await _edit(ctx, p, wanted, "exact")
 
 
 async def _propose(ctx: Ctx, action: str, campaign_ids: list[str]) -> str:
@@ -181,19 +182,22 @@ async def ask_scaler(request: str, runtime: ToolRuntime[Ctx], campaign_id: str =
     post, a problem. Write her request clearly in Romanian. Then tell her it reached Scaler."""
     ctx = runtime.context
     owner = ctx.owner_chat_id or ""
+    if ctx.asked:
+        return "a note to Scaler already went out for this message: put everything into that one request"
     if not owner:
         return "Scaler's chat is not set (CONTENT_OWNER_CHAT_ID): tell her to write to Scaler directly"
     p = await ctx.post(campaign_id) if campaign_id else None
     about = f"\nPostarea: {p.short} · v{p.version} [{p.campaign_id}]" if p else ""
     text = f"📨 De la Betty:\n{request.strip()}{about}\n\nMesajul ei: „{ctx.text.strip()[:1500]}”"
-    digest = hashlib.sha256(request.strip().encode()).hexdigest()[:12]
-    key = f"ask:{ctx.chat_id}:{ctx.update_id}:{digest}"
+    key = (f"ask:{ctx.chat_id}:{ctx.update_id}" if ctx.update_id is not None     # one message → one note
+           else f"ask:{ctx.chat_id}:{hashlib.sha256(ctx.text.encode()).hexdigest()[:16]}")
 
     async def send() -> str:
         msg = await ctx.lv.services.telegram.call("sendMessage", {"chat_id": owner, "text": text})
         return str(msg.get("message_id", ""))
 
     await ctx.lv.services.store.once(key, send)
+    ctx.asked = True
     ctx.done.append("ask_scaler")
     return "sent to Scaler"
 
