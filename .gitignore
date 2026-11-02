@@ -25,6 +25,9 @@ htmlcov/
 downloads/
 *.sqlite
 output/
+.candidates/          # every photo candidate `content_system photos` tried (assets/curated/week_*/.candidates)
+.*.part
+graphify-out/
 
 # OS
 .DS_Store
@@ -43,7 +46,11 @@ tiktok-to-youtube-bot/
 
 # Assets (binary — add via LFS or manual deploy)
 assets/fonts/*.ttf
+!assets/fonts/PlayfairDisplay.ttf
 assets/logos/*.png
+!assets/logos/LOGO_BBC_1200X300.png
+!assets/logos/bbc_logo_white.png
+!assets/logos/bbc_logo_navy.png
 assets/backgrounds/*
 !assets/backgrounds/.gitkeep
 !assets/backgrounds/README.md

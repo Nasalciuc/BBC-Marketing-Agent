@@ -11,6 +11,9 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+# httpx logs each request URL at INFO, and a Telegram URL contains the bot token.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("bbc.broadcast")
 
 
@@ -19,6 +22,12 @@ def _week_label() -> str:
 
 
 async def run_broadcast():
+    from config import settings
+
+    if not settings.broadcast_enabled:
+        log.warning("Broadcast is off (BROADCAST_ENABLED=false): nothing sent")
+        return
+
     log.info("Starting weekly broadcast...")
 
     from services.notifier import send_error_alert
@@ -80,7 +89,8 @@ async def run_broadcast():
             campaign_id = deal.get("campaign_id", "")
             if campaign_id:
                 update_deal_status(campaign_id, "sent")
-                await update_campaign_status(campaign_id, "sent")
+                if not await update_campaign_status(campaign_id, "sent"):
+                    log.warning("campaign %s was sent, but its status could not be set to sent", campaign_id)
 
         await send_broadcast_report(total_results)
         await record_job_complete(job_id, events_count=len(approved), details=total_results)

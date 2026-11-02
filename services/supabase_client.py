@@ -158,8 +158,10 @@ async def save_campaign(event: dict) -> bool:
         "caption_override": event.get("caption_override"),
         "status": event.get("status", "draft"),
         "scheduled_day": event.get("scheduled_day"),
+        "design_style": event.get("design_style"),
+        "design_tone": event.get("design_tone"),
     }
-    optional = ("whatsapp_caption", "scheduled_day")
+    optional = ("whatsapp_caption", "scheduled_day", "design_style", "design_tone")
     try:
         for _ in range(len(optional) + 1):
             try:
@@ -214,20 +216,39 @@ async def get_approved_campaigns() -> list[dict]:
         return []
 
 
-async def update_campaign_status(campaign_id: str, status: str):
-    """Actualizează statusul unui campaign."""
+FINAL_STATUSES = ("sent", "cancelled")  # a campaign in one of these never changes status again
+
+
+class StatusUnavailable(Exception):
+    """Supabase could not be read or written, so nothing was changed."""
+
+
+async def update_campaign_status(campaign_id: str, status: str) -> bool:
+    """Actualizează statusul unui campaign — never one that is already sent or cancelled.
+
+    True only when a row was updated; False when there is no client, the query failed, or no row
+    matched (it doesn't exist, or it is sent/cancelled), so callers never report a change that didn't happen.
+    """
     client = _get_client()
     if not client:
-        return
+        return False
     try:
         update_data: dict = {"status": status}
         if status == "approved":
             update_data["approved_at"] = datetime.now(UTC).isoformat()
         elif status == "sent":
             update_data["sent_at"] = datetime.now(UTC).isoformat()
-        client.table("campaigns").update(update_data).eq("campaign_id", campaign_id).execute()
+        result = (
+            client.table("campaigns")
+            .update(update_data)
+            .eq("campaign_id", campaign_id)
+            .not_.in_("status", list(FINAL_STATUSES))
+            .execute()
+        )
     except Exception as e:
         log.error("Failed to update campaign status: %s", e)
+        return False
+    return bool(result.data)
 
 
 async def get_active_contacts() -> list[dict]:
@@ -273,3 +294,50 @@ async def log_broadcast(
         ).execute()
     except Exception as e:
         log.error("Failed to log broadcast: %s", e)
+
+
+async def get_campaign_status(campaign_id: str) -> str | None:
+    """Current status of a campaign; None when there is no such row or Supabase is not configured.
+
+    Raises StatusUnavailable when the read fails: the caller must then change nothing, because it
+    can't know whether the campaign is already sent or cancelled.
+    """
+    client = _get_client()
+    if not client or not campaign_id:
+        return None
+    try:
+        r = (
+            client.table("campaigns")
+            .select("status")
+            .eq("campaign_id", campaign_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as e:
+        log.error("Failed to read campaign status %s: %s", campaign_id, e)
+        raise StatusUnavailable(str(e)) from e
+    return r.data[0]["status"] if r.data else None
+
+
+async def reserve_campaign_for_sending(campaign_id: str) -> dict | None:
+    """Mark a campaign sent *before* it goes to clients, in one guarded update.
+
+    A second tap, a tap after Cancel or a retry then finds it sent and sends nothing: a client
+    message goes out at most once. Returns the campaign row, or None when it does not exist or is
+    already sent or cancelled. Raises StatusUnavailable when Supabase can't be reached.
+    """
+    client = _get_client()
+    if not client:
+        raise StatusUnavailable("Supabase is not configured")
+    try:
+        r = (
+            client.table("campaigns")
+            .update({"status": "sent", "sent_at": datetime.now(UTC).isoformat()})
+            .eq("campaign_id", campaign_id)
+            .not_.in_("status", list(FINAL_STATUSES))
+            .execute()
+        )
+    except Exception as e:
+        log.error("Failed to reserve campaign %s for sending: %s", campaign_id, e)
+        raise StatusUnavailable(str(e)) from e
+    return r.data[0] if r.data else None
