@@ -135,13 +135,15 @@ async def telegram_webhook(request: Request):
         elif action == "cancel":
             from services.telegram_client import answer_callback_query
 
-            try:
-                from services.supabase_client import update_campaign_status
+            from services.supabase_client import update_campaign_status
 
-                await update_campaign_status(campaign_id, "cancelled")
+            try:
+                cancelled = await update_campaign_status(campaign_id, "cancelled")
             except Exception:
-                pass
-            await answer_callback_query(callback_id, "❌ Cancelled")
+                log.exception("cancel failed: %s", campaign_id)
+                cancelled = False
+            await answer_callback_query(callback_id, "❌ Cancelled" if cancelled else
+                                        "⚠️ Not cancelled: it was already sent or cancelled, or the database didn't answer")
         elif action == "cmd":
             cmd = campaign_id
             from services.telegram_client import answer_callback_query

@@ -20,6 +20,7 @@ def calls(monkeypatch):
 
     async def update_status(campaign_id, status):
         log["status"].append((campaign_id, status))
+        return log.get("status_ok", True)
 
     async def edit_markup(chat_id, message_id, reply_markup=None):
         log["markup"].append(message_id)
@@ -351,3 +352,88 @@ def test_httpx_does_not_log_request_urls():
 
     assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
     assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
+
+
+@pytest.mark.parametrize(("data", "error", "expected"), [([{"campaign_id": "C"}], None, True), ([], None, False),
+                                                          (None, RuntimeError("timeout"), False)])
+def test_a_status_update_says_whether_it_changed_anything(monkeypatch, data, error, expected):
+    import services.supabase_client as sb
+
+    _client(monkeypatch, [], data=data, error=error)
+    assert asyncio.run(sb.update_campaign_status("C", "approved")) is expected
+    monkeypatch.setattr(sb, "_get_client", lambda: None)
+    assert asyncio.run(sb.update_campaign_status("C", "approved")) is False
+
+
+def test_an_approve_the_database_refused_is_not_reported_as_done(monkeypatch, calls):
+    """Found by CodeRabbit: the Sheet said approved, Supabase changed nothing, and the tap said ✅."""
+    from handlers.review import DB_FAILED, handle_approve
+
+    _status(monkeypatch, "draft")
+    calls["status_ok"] = False
+    asyncio.run(handle_approve("2026-W42-V4-001", "cb", 1, 2))
+    assert calls["answer"] == [DB_FAILED] and calls["markup"] == []
+    assert calls["sheet"] == [("2026-W42-V4-001", "approved"), ("2026-W42-V4-001", "draft")]   # put back
+
+
+def test_an_approve_that_lost_the_race_to_a_send_says_so(monkeypatch, calls):
+    import services.supabase_client as sb
+    from handlers.review import handle_approve
+
+    states = iter(["draft", "sent"])            # read before the update, then after it matched nothing
+
+    async def get_status(campaign_id):
+        return next(states)
+
+    monkeypatch.setattr(sb, "get_campaign_status", get_status)
+    calls["status_ok"] = False
+    asyncio.run(handle_approve("2026-W42-V4-001", "cb", 1, 2))
+    assert calls["answer"] == ["Already sent: nothing changed"]
+    assert calls["sheet"][-1] == ("2026-W42-V4-001", "sent")
+
+
+def test_cancel_says_when_nothing_was_cancelled(monkeypatch, calls):
+    from fastapi.testclient import TestClient
+
+    import webhook
+
+    monkeypatch.setattr(settings, "telegram_webhook_secret", "s3cret")
+    monkeypatch.setattr(settings, "telegram_admin_ids", "1")
+    client = TestClient(webhook.app)
+    cb = {"id": "c", "data": "cancel_URG-1", "from": {"id": 1}, "message": {"message_id": 5, "chat": {"id": 1}}}
+    for ok, text in ((True, "❌ Cancelled"), (False, "⚠️ Not cancelled")):
+        calls["status_ok"] = ok
+        client.post("/webhook/telegram", headers={"X-Telegram-Bot-Api-Secret-Token": "s3cret"},
+                    json={"update_id": 1, "callback_query": cb})
+        assert calls["answer"][-1].startswith(text)
+
+
+def test_the_w42_script_never_overwrites_a_rejected_or_cancelled_post(monkeypatch):
+    import importlib.util
+
+    import services.supabase_client as sb
+
+    spec = importlib.util.spec_from_file_location("assemble_w42", "scripts/assemble_week_w42.py")
+    w42 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(w42)
+
+    async def must_not_upload(*a, **k):
+        raise AssertionError("uploaded")
+
+    monkeypatch.setattr(sb, "upload_image", must_not_upload)
+    for status in ("rejected", "cancelled"):
+        client = type("C", (), {"table": lambda self, name: _Query([], data=[{"status": status}])})()
+        rendered = [{"cid": "2026-W42-V4-001", "post": {}, "res": None, "design": type("D", (), {"style": None})()}]
+        asyncio.run(w42.send_all(rendered, client, type("S", (), {"telegram_chat_id": "1"})(), True))
+
+
+def test_the_w42_script_refuses_to_send_after_the_week(monkeypatch):
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("assemble_w42", "scripts/assemble_week_w42.py")
+    w42 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(w42)
+    monkeypatch.setattr(sys, "argv", ["assemble_week_w42.py", "--send", "--force"])
+    with pytest.raises(SystemExit, match="W42 ended on 18 October"):
+        w42.main()
