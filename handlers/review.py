@@ -9,53 +9,85 @@ log = logging.getLogger("bbc.handlers.review")
 # A post that reached clients, or was closed, is never changed by a late or double tap.
 LOCKED_STATUSES = {"sent", "cancelled"}
 
+NOT_READ = "⚠️ Couldn't read the post's status: nothing changed. Try again."
+SHEET_FAILED = "⚠️ The Google Sheet did not update: nothing changed. Try again."
+
+
+async def set_review_status(campaign_id: str, target: str) -> tuple[str, str | None]:
+    """Approve or reject a post in the Sheet and in Supabase — never one that is sent or cancelled.
+
+    Returns (outcome, status before):
+      "done"         both stores now say `target`;
+      "same"         it already was `target` — the Sheet is written again, in case an earlier write failed;
+      "locked"       it is sent or cancelled — nothing touched;
+      "unreadable"   its status can't be read — nothing touched;
+      "sheet_failed" the Sheet write failed — Supabase is left as it was, so tapping again redoes both.
+    Buttons and text intents both go through here, so neither can bypass the guard.
+    """
+    from services.sheets_client import update_deal_status
+    from services.supabase_client import StatusUnavailable, get_campaign_status, update_campaign_status
+
+    try:
+        current = await get_campaign_status(campaign_id)
+    except StatusUnavailable:
+        return "unreadable", None
+    if current in LOCKED_STATUSES:
+        return "locked", current
+    if not update_deal_status(campaign_id, target):
+        return "sheet_failed", current
+    if current == target:
+        return "same", current
+    await update_campaign_status(campaign_id, target)
+    return "done", current
+
+
+def review_reply(outcome: str, current: str | None, done: str) -> str:
+    """What to tell the person after set_review_status."""
+    if outcome == "done":
+        return done
+    if outcome in ("same", "locked"):
+        return f"Already {current}: nothing changed"
+    return NOT_READ if outcome == "unreadable" else SHEET_FAILED
+
 
 async def handle_approve(
     campaign_id: str, callback_id: str, chat_id: int, message_id: int
 ):
     from keyboards import approved_keyboard
-    from services.sheets_client import update_deal_status
-    from services.supabase_client import update_campaign_status
     from services.telegram_client import answer_callback_query, edit_message_reply_markup
 
-    from services.supabase_client import get_campaign_status
-
-    current = await get_campaign_status(campaign_id)
-    if current in LOCKED_STATUSES | {"approved"}:
-        await answer_callback_query(callback_id, f"Already {current}: nothing changed")
-        return
-
-    log.info("Approved: %s", campaign_id)
-    update_deal_status(campaign_id, "approved")
-    await update_campaign_status(campaign_id, "approved")
-    await answer_callback_query(callback_id, "✅ Approved")
-    await edit_message_reply_markup(chat_id, message_id, approved_keyboard(campaign_id))
+    outcome, current = await set_review_status(campaign_id, "approved")
+    await answer_callback_query(callback_id, review_reply(outcome, current, "✅ Approved"))
+    if outcome == "done":
+        log.info("Approved: %s", campaign_id)
+        await edit_message_reply_markup(chat_id, message_id, approved_keyboard(campaign_id))
 
 
 async def handle_reject(
     campaign_id: str, callback_id: str, chat_id: int, message_id: int
 ):
     from keyboards import rejected_keyboard
-    from services.sheets_client import update_deal_status
-    from services.supabase_client import update_campaign_status
     from services.telegram_client import answer_callback_query, edit_message_reply_markup
 
-    from services.supabase_client import get_campaign_status
-
-    current = await get_campaign_status(campaign_id)
-    if current in LOCKED_STATUSES | {"rejected"}:
-        await answer_callback_query(callback_id, f"Already {current}: nothing changed")
-        return
-
-    log.info("Rejected: %s", campaign_id)
-    update_deal_status(campaign_id, "rejected")
-    await update_campaign_status(campaign_id, "rejected")
-    await answer_callback_query(callback_id, "❌ Rejected")
-    await edit_message_reply_markup(chat_id, message_id, rejected_keyboard())
+    outcome, current = await set_review_status(campaign_id, "rejected")
+    await answer_callback_query(callback_id, review_reply(outcome, current, "❌ Rejected"))
+    if outcome == "done":
+        log.info("Rejected: %s", campaign_id)
+        await edit_message_reply_markup(chat_id, message_id, rejected_keyboard())
 
 
 async def handle_edit_caption(campaign_id: str, callback_id: str, chat_id: int):
+    from services.supabase_client import FINAL_STATUSES, StatusUnavailable, get_campaign_status
     from services.telegram_client import answer_callback_query, send_message
+
+    try:
+        current = await get_campaign_status(campaign_id)
+    except StatusUnavailable:
+        await answer_callback_query(callback_id, NOT_READ)
+        return
+    if current in LOCKED_STATUSES:
+        await answer_callback_query(callback_id, f"Already {current}: nothing changed")
+        return
 
     try:
         from config import settings
@@ -65,7 +97,7 @@ async def handle_edit_caption(campaign_id: str, callback_id: str, chat_id: int):
             sb = create_client(settings.supabase_url, settings.supabase_key)
             sb.table("campaigns").update({"status": "editing"}).eq(
                 "campaign_id", campaign_id
-            ).execute()
+            ).not_.in_("status", list(FINAL_STATUSES)).execute()
     except Exception as e:
         log.error("Edit flag: %s", e)
 
@@ -83,13 +115,21 @@ async def handle_caption_reply(campaign_id: str, new_caption: str, chat_id: int)
         from config import settings
         from supabase import create_client
 
+        from services.supabase_client import FINAL_STATUSES
+
         sb = create_client(settings.supabase_url, settings.supabase_key)
-        sb.table("campaigns").update(
+        r = sb.table("campaigns").update(
             {
                 "caption_override": new_caption,
                 "status": "draft",
             }
-        ).eq("campaign_id", campaign_id).execute()
+        ).eq("campaign_id", campaign_id).not_.in_("status", list(FINAL_STATUSES)).execute()
+        if not r.data:
+            await send_message(
+                chat_id=chat_id,
+                text=f"❌ *{campaign_id}* is sent or cancelled, or does not exist: caption not changed.",
+            )
+            return
         await send_message(chat_id=chat_id, text=f"✅ Caption updated for *{campaign_id}*.")
     except Exception as e:
         log.error("Caption update: %s", e)

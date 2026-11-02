@@ -219,6 +219,10 @@ async def get_approved_campaigns() -> list[dict]:
 FINAL_STATUSES = ("sent", "cancelled")  # a campaign in one of these never changes status again
 
 
+class StatusUnavailable(Exception):
+    """Supabase could not be read or written, so nothing was changed."""
+
+
 async def update_campaign_status(campaign_id: str, status: str):
     """Actualizează statusul unui campaign — never one that is already sent or cancelled."""
     client = _get_client()
@@ -287,7 +291,11 @@ async def log_broadcast(
 
 
 async def get_campaign_status(campaign_id: str) -> str | None:
-    """Current status of a campaign, or None when it can't be read (no client, no row, error)."""
+    """Current status of a campaign; None when there is no such row or Supabase is not configured.
+
+    Raises StatusUnavailable when the read fails: the caller must then change nothing, because it
+    can't know whether the campaign is already sent or cancelled.
+    """
     client = _get_client()
     if not client or not campaign_id:
         return None
@@ -299,7 +307,31 @@ async def get_campaign_status(campaign_id: str) -> str | None:
             .limit(1)
             .execute()
         )
-        return r.data[0]["status"] if r.data else None
     except Exception as e:
         log.error("Failed to read campaign status %s: %s", campaign_id, e)
-        return None
+        raise StatusUnavailable(str(e)) from e
+    return r.data[0]["status"] if r.data else None
+
+
+async def reserve_campaign_for_sending(campaign_id: str) -> dict | None:
+    """Mark a campaign sent *before* it goes to clients, in one guarded update.
+
+    A second tap, a tap after Cancel or a retry then finds it sent and sends nothing: a client
+    message goes out at most once. Returns the campaign row, or None when it does not exist or is
+    already sent or cancelled. Raises StatusUnavailable when Supabase can't be reached.
+    """
+    client = _get_client()
+    if not client:
+        raise StatusUnavailable("Supabase is not configured")
+    try:
+        r = (
+            client.table("campaigns")
+            .update({"status": "sent", "sent_at": datetime.now(UTC).isoformat()})
+            .eq("campaign_id", campaign_id)
+            .not_.in_("status", list(FINAL_STATUSES))
+            .execute()
+        )
+    except Exception as e:
+        log.error("Failed to reserve campaign %s for sending: %s", campaign_id, e)
+        raise StatusUnavailable(str(e)) from e
+    return r.data[0] if r.data else None
