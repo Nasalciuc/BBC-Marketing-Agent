@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -40,6 +41,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PHOTOS = ROOT / "assets" / "curated" / "week_2026_10_12"
 OUT = ROOT / "output" / "w42"
 WEEK = "2026-W42"        # ISO week of 14–18 Oct — fixed, never computed from the run date
+LAST_DAY = date(2026, 10, 18)   # after it, --send is refused: the week is history
 ID_TAG = "V4"            # ids 2026-W42-V4-001…005 cannot collide with the legacy "%Y-W%W-CUR-00n" ids
 CAPTION_LIMIT = 1024     # Telegram photo caption, including the "📋 campaign id" line
 EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".JPG", ".JPEG", ".PNG", ".WEBP")
@@ -276,7 +278,7 @@ async def send_all(rendered: list[dict], client, settings, force: bool) -> None:
     for r in rendered:
         cid, post, res, style = r["cid"], r["post"], r["res"], r["design"].style
         found = client.table("campaigns").select("status, review_message_id").eq("campaign_id", cid).execute().data
-        if found and found[0].get("status") in ("approved", "sent", "posted"):
+        if found and found[0].get("status") in ("approved", "sent", "posted", "rejected", "cancelled"):
             print(f"  = {cid} is {found[0]['status']} — never overwritten")
             continue
         if found and found[0].get("review_message_id") and not force:
@@ -345,6 +347,9 @@ def main() -> None:
     mode.add_argument("--send", action="store_true", help="render, upload, save campaigns, send to Telegram")
     ap.add_argument("--force", action="store_true", help="resend posts already waiting for approval (never approved ones)")
     args = ap.parse_args()
+    if args.send and date.today() > LAST_DAY:
+        raise SystemExit(f"STOP — W42 ended on {LAST_DAY:%d %B}: --send would put old posts up for approval again. "
+                         "Weeks are sent with `python -m content_system send weeks/<week>.toml` now.")
 
     errors = check_photos()
     if errors:
