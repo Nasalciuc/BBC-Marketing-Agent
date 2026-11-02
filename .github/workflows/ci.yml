@@ -34,7 +34,12 @@ jobs:
         with:
           node-version: "24"
       - run: npm install -g agent-browser@0.41.1 --ignore-scripts
-      - run: echo "AGENT_BROWSER_BIN=$(npm root -g)/agent-browser/bin/agent-browser-linux-x64" >> "$GITHUB_ENV"
+      # --ignore-scripts also skips the step that makes the binary executable: do it here
+      - run: |
+          bin="$(npm root -g)/agent-browser/bin/agent-browser-linux-x64"
+          chmod +x "$bin"
+          "$bin" --version
+          echo "AGENT_BROWSER_BIN=$bin" >> "$GITHUB_ENV"
       - run: python scripts/ensure_default_background.py
       - run: pytest tests -q
       - run: ruff check .
