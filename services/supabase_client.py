@@ -158,8 +158,10 @@ async def save_campaign(event: dict) -> bool:
         "caption_override": event.get("caption_override"),
         "status": event.get("status", "draft"),
         "scheduled_day": event.get("scheduled_day"),
+        "design_style": event.get("design_style"),
+        "design_tone": event.get("design_tone"),
     }
-    optional = ("whatsapp_caption", "scheduled_day")
+    optional = ("whatsapp_caption", "scheduled_day", "design_style", "design_tone")
     try:
         for _ in range(len(optional) + 1):
             try:

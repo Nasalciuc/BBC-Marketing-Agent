@@ -39,3 +39,4 @@ ruff>=0.8.0
 
 # Video download
 yt-dlp>=2025.1.0
+numpy>=1.26.0
