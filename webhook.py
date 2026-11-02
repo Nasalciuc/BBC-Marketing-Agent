@@ -120,6 +120,12 @@ async def telegram_webhook(request: Request):
             await handle_callback(cb, data.get("update_id"))
             return {"ok": True}
 
+        if callback_data.startswith("pl:"):
+            from content_system.planning.review import route as route_plan
+
+            await route_plan(cb, data.get("update_id"))
+            return {"ok": True}
+
         if callback_data.startswith("ca:"):
             from content_system.settings import get_settings as content_settings
 

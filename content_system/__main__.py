@@ -9,12 +9,20 @@ python -m content_system <command>
   status   weeks/2026-W43.toml       where each post is                               (railway run)
   decide   <campaign_id> approve|reject [--version N]   same as the Telegram buttons  (railway run)
   db-setup                           LangGraph checkpoint tables + checks             (railway run)
+
+  plan     --week 2026-W46 [--send]  research the week and write its plan (ANTHROPIC_API_KEY); --send:
+           [--candidates 12]         store it and send it to Betty on Telegram          (railway run)
+  plan     --week 2026-W46 --status  the week's plans and what Betty decided           (railway run)
+  build    --week 2026-W46           the plan Betty approved → weeks/2026-W46.toml, its photos, the render
+           [--replace] [--no-photos] [--candidates 3]                                   (railway run)
+           then `send weeks/2026-W46.toml`: each post still goes to Betty for its own ✅
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -304,6 +312,170 @@ async def cmd_db_setup(args: argparse.Namespace) -> None:
         await db.close()
 
 
+def _rel(path: Path) -> str:
+    try:
+        return path.relative_to(ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _today():
+    from datetime import date
+
+    return date.today()
+
+
+def _span(week: str):
+    from content_system.planning.research import week_span
+    from content_system.settings import get_settings
+
+    if not re.fullmatch(r"\d{4}-W\d{2}", week):
+        stop(f"--week {week!r}: write it like 2026-W46")
+    days = tuple(d.strip() for d in get_settings().plan_days.split(",") if d.strip())
+    try:
+        return week_span(week, days)
+    except ValueError as e:
+        stop(f"--week {week} with CONTENT_PLAN_DAYS={','.join(days)}: {e}")
+        raise
+
+
+async def _plans_status(span) -> None:
+    from content_system.store import PgStore
+
+    _, cs = _require()
+    db = await _open(cs)
+    try:
+        problems, _ = await db.verify(planning=True)
+        if problems:
+            stop("database not ready: " + "; ".join(problems))
+        rows = await PgStore(db.pool).week_plans(span.name)
+    finally:
+        await db.close()
+    if not rows:
+        print(f"{span.name}: no plan yet — python -m content_system plan --week {span.name} --send")
+        return
+    print(span.name)
+    for r in rows:
+        dropped = f", dropped {', '.join(map(str, r['dropped']))}" if r["dropped"] else ""
+        when = f" → {r['decided_at']:%a %d %b %H:%M}" if r["decided_at"] else ""
+        print(f"  {r['id']}  {r['status']:<9} {r['n']} posts{dropped}  {r['created_at']:%a %d %b %H:%M}{when}")
+    if rows[-1]["status"] == "approved":
+        print(f"\nNext: railway run python -m content_system build --week {span.name}")
+
+
+async def cmd_plan(args: argparse.Namespace) -> None:
+    import secrets
+
+    from config import settings as app
+    from content_system.assistant.usage import cost
+    from content_system.planning.llm import PlanningError, anthropic_call
+    from content_system.planning.plan import make_plan, priced_airports
+    from content_system.planning.review import send_plan
+    from content_system.settings import db_url_problem, get_settings
+    from content_system.store import PgStore
+
+    span = _span(args.week)
+    if args.status:
+        await _plans_status(span)
+        return
+    cs = get_settings()
+    if not app.anthropic_api_key:
+        stop("ANTHROPIC_API_KEY not set — run it with: railway run python -m content_system plan …")
+    if args.send:
+        app, cs = _require("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+    db = store = None
+    ideas: list[dict] = []
+    if args.send or db_url_problem(cs.db_url) is None:
+        db = await _open(cs)
+    try:
+        if db is not None:
+            problems, _ = await db.verify(planning=True)
+            if problems and args.send:
+                stop("database not ready: " + "; ".join(problems))
+            if problems:
+                print("  · Betty's ideas not read: " + "; ".join(problems))
+            else:
+                store = PgStore(db.pool)
+                ideas = await store.new_ideas()
+        else:
+            print("  · CONTENT_DB_URL not set: Betty's ideas not read, the plan is only written to a file")
+        days = ", ".join(f"{d:%a %d %b}" for d in span.days)
+        print(f"{span.name} · {len(span.days)} posts ({days}) · {len(ideas)} idea(s) from Betty · {cs.plan_model}, "
+              f"up to {cs.plan_searches} web searches — this takes a few minutes")
+        try:
+            plan = await make_plan(anthropic_call(cs.plan_model, app.anthropic_api_key), span, today=_today(),
+                                   ideas=ideas, airports=priced_airports(),
+                                   candidates_n=args.candidates or cs.plan_candidates, max_searches=cs.plan_searches)
+        except PlanningError as e:
+            stop(f"no plan: {e}")
+        for note in plan.notes:
+            print(f"  · {note}")
+        for i, (post, urls) in enumerate(zip(plan.posts, plan.sources, strict=True), 1):
+            print(f"  {i}. {post['day']}  {post['design']['style']:<10} {post['label']}  ({len(urls)} source(s))")
+        u = plan.usage
+        usd = cost(cs.plan_model, u.get("input_tokens", 0), u.get("output_tokens", 0)) + u.get("searches", 0) * 0.01
+        print(f"  cost ≈ ${usd:.2f} ({u.get('input_tokens', 0)} in, {u.get('output_tokens', 0)} out, "
+              f"{u.get('searches', 0)} searches)")
+        plan_id = secrets.token_hex(6)
+        out = ROOT / cs.output_root / span.name / f"plan-{plan_id}.toml"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(plan.manifest, encoding="utf-8")
+        print(f"\nPlan {plan_id} → {_rel(out)}")
+        if not args.send:
+            print(f"Read it; to send it to Betty: railway run python -m content_system plan --week {span.name} --send"
+                  " (a new plan, researched again)")
+            return
+        await store.add_plan(plan_id, span.name, plan.posts, plan.sources, plan.manifest, plan.idea_ids)
+        closed = await store.replace_open_plans(span.name, plan_id)
+        if closed:
+            print(f"  · older plan(s) {', '.join(closed)} closed: their buttons no longer work")
+        services = _services(app, cs, store)
+        row = await store.get_plan(plan_id)
+        await store.once(f"plan-send:{plan_id}",
+                         lambda: send_plan(store, services.telegram, services.chat_id, row))
+        print(f"✓ sent to Betty on Telegram. Then: python -m content_system plan --week {span.name} --status")
+    finally:
+        if db is not None:
+            await db.close()
+
+
+async def cmd_build(args: argparse.Namespace) -> None:
+    from content_system.planning.plan import check_week, kept_manifest
+    from content_system.store import PgStore
+
+    span = _span(args.week)
+    _, cs = _require()
+    db = await _open(cs)
+    try:
+        problems, _ = await db.verify(planning=True)
+        if problems:
+            stop("database not ready: " + "; ".join(problems))
+        plan = await PgStore(db.pool).latest_plan(span.name, "approved")
+    finally:
+        await db.close()
+    if plan is None:
+        stop(f"no approved plan for {span.name} — python -m content_system plan --week {span.name} --status")
+    text = kept_manifest(span, plan["posts"], plan["dropped"],
+                         header=f"{span.name} — plan {plan['id']}, approved by Betty on Telegram (content_system build)")
+    problems = check_week(text)
+    if problems:
+        stop("the approved plan doesn't pass the manifest checks: " + "; ".join(problems))
+    target = ROOT / "weeks" / f"{span.name}.toml"
+    rel = target.relative_to(ROOT).as_posix()
+    if target.exists() and target.read_text(encoding="utf-8") != text and not args.replace:
+        stop(f"{rel} already exists and is different — keep it, or run again with --replace")
+    target.write_text(text, encoding="utf-8")
+    kept = len(plan["posts"]) - len(plan["dropped"])
+    print(f"✓ {rel} · {kept} posts from plan {plan['id']}")
+    if args.no_photos:
+        print(f"Then: python -m content_system photos {rel}, render {rel}, send {rel}")
+        return
+    await cmd_photos(argparse.Namespace(manifest=rel, post=None, again=False, candidates=args.candidates))
+    await cmd_render(argparse.Namespace(manifest=rel))
+    print(f"\nLook at the preview; then each post goes to Betty for its own ✅:\n"
+          f"  railway run python -m content_system send {rel}")
+
+
 def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     ap = argparse.ArgumentParser(prog="python -m content_system", description=__doc__,
@@ -324,13 +496,23 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("action", choices=["approve", "reject"])
     d.add_argument("--version", type=int, default=None)
     sub.add_parser("db-setup")
+    pl = sub.add_parser("plan")
+    pl.add_argument("--week", required=True, help="ISO week, e.g. 2026-W46")
+    pl.add_argument("--send", action="store_true", help="store the plan and send it to Betty on Telegram")
+    pl.add_argument("--status", action="store_true", help="the week's plans and what Betty decided")
+    pl.add_argument("--candidates", type=int, default=0, help="candidates to research (default 12)")
+    b = sub.add_parser("build")
+    b.add_argument("--week", required=True)
+    b.add_argument("--replace", action="store_true", help="overwrite weeks/<week>.toml if it is different")
+    b.add_argument("--no-photos", action="store_true", help="only write the manifest")
+    b.add_argument("--candidates", type=int, default=0, help="photo candidates per post (default 3)")
     args = ap.parse_args(argv)
 
     if args.command == "check":
         cmd_check(args)
         return
     runner = {"render": cmd_render, "send": cmd_send, "status": cmd_status, "photos": cmd_photos,
-              "decide": cmd_decide, "db-setup": cmd_db_setup}[args.command]
+              "decide": cmd_decide, "db-setup": cmd_db_setup, "plan": cmd_plan, "build": cmd_build}[args.command]
     # psycopg's async mode can't run on Windows' default Proactor loop; Playwright renders in a
     # worker thread with its own (default) loop, so only the main loop changes.
     loop_factory = asyncio.SelectorEventLoop if sys.platform == "win32" else None

@@ -155,3 +155,54 @@ select tablename from pg_tables where schemaname = 'content' and tablename in ('
 select day, model, calls, round(cost_usd, 4) from content.usage order by day desc, model;                        -- spend per day
 select created_at, text from content.ideas where status = 'new' order by created_at desc;                         -- Betty's ideas
 ```
+
+## The week's plan (`content_system/planning`, PR-3)
+
+Before the posts are made, Betty approves **what** the week will be about. Nothing here makes a
+photo, a campaign or a post: that comes after her ✅, and each post still gets its own ✅ later.
+
+```
+plan --week W --send:  research (web search) → choice → one draft per post → manifest check → Telegram
+Betty:                 ❌ Scot / ↩️ Pun-o înapoi per post · ✅ Aprob planul · 🔁 Vreau alt plan
+build --week W:        the approved plan → weeks/W.toml → photos → render      then: send weeks/W.toml
+```
+
+| Command | Needs | Does |
+|---|---|---|
+| `railway run python -m content_system plan --week 2026-W47` | `ANTHROPIC_API_KEY` (and `CONTENT_DB_URL` for Betty's ideas) | researches and writes `output/content/2026-W47/plan-<id>.toml` — read it, nothing is sent |
+| `railway run python -m content_system plan --week 2026-W47 --send` | + `CONTENT_DB_URL`, bot token, `TELEGRAM_CHAT_ID` | a new plan, stored in `content.plans`, sent to Betty; older open plans of the week stop working |
+| `railway run python -m content_system plan --week 2026-W47 --status` | `CONTENT_DB_URL` | the week's plans and what Betty decided |
+| `railway run python -m content_system build --week 2026-W47 [--replace] [--no-photos]` | `CONTENT_DB_URL`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` | the approved plan without the posts she took out → `weeks/2026-W47.toml`, its photos, the render |
+
+How a plan is made (Claude Sonnet 5.5, `CONTENT_PLAN_MODEL`):
+
+1. **Research, with web search** (up to `CONTENT_PLAN_SEARCHES`, default 10, $10 per 1000): about 12
+   candidates (events 2–10 weeks ahead, destinations in season, airline/lounge news, hotels; Betty's
+   new ideas first), each with its facts and the page of each fact. A fact whose page was not among
+   the pages the searches actually returned is dropped; a candidate left with fewer than two facts,
+   or an event already over, is dropped.
+2. **Choice:** one candidate per publishing day (`CONTENT_PLAN_DAYS`, default Wed–Sun) with a style.
+   Checked in code, asked again with the reasons (3 tries): the week mix (≤60% with a fare, never
+   three in a row, a style at most twice), a content type at most twice and at least three types, a
+   priced style only for a destination the pricing engine can price, an event not over on its day.
+3. **Drafts:** per post the text, the design fields of its style and the photo brief. Checked in
+   code, written again once with the reasons: the manifest fields, the caption rules (no `$`, no
+   `_ * \` [`, the length), a fare the pricing engine gives for the post's own destination, the
+   foreground device not repeated, and the fact check of the assistant — **every number, airport
+   code, month and weekday in the text must be in the research** (or be the post's own day).
+4. **The whole week** goes through the manifest loader (`load_week`) before it is offered.
+
+On Telegram, Betty gets a header, one message per post (day, style, headline, text, the photo in
+words, up to three source links) and a last card. ✅ is refused when the posts left would break the
+week mix ("pune una înapoi sau cere alt plan"). On ✅ her ideas in the plan are marked `planned` and
+Scaler's chat (`CONTENT_OWNER_CHAT_ID`) gets the `build` command; on 🔁, the `plan … --send` command.
+Taps are claimed per Telegram update (a repeated delivery does nothing) and a closed plan's buttons
+answer "Planul acesta e deja închis".
+
+Before the first `plan --send`: migration `013_plans.sql` in the SQL Editor (after 012). `plan` and
+`build` check that `content.plans` and `content.ideas` exist.
+
+```sql
+select id, week, status, jsonb_array_length(posts) as posts, dropped, created_at, decided_at
+  from content.plans order by created_at desc limit 10;                                       -- the plans
+```

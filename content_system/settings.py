@@ -30,6 +30,12 @@ class ContentSettings(BaseSettings):
     vision_model: str = "claude-sonnet-5-5"
     image_candidates: int = 3
 
+    # the week's plan (content_system/planning) — `plan --week`, `build --week`; migrations/013
+    plan_model: str = "claude-sonnet-5-5"
+    plan_days: str = "Wed,Thu,Fri,Sat,Sun"     # the publishing days of a week
+    plan_candidates: int = 12                  # candidates researched for a week
+    plan_searches: int = 10                    # web searches for them ($10 per 1000)
+
     # Betty's assistant (content_system/assistant) — needs enabled=true too, and migrations/012
     assistant_enabled: bool = False
     assistant_model: str = "claude-haiku-5-5"

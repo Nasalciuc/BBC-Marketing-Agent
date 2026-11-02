@@ -59,6 +59,7 @@ class MemoryStore:
         self.proposals: dict[str, dict[str, Any]] = {}
         self.ideas: list[dict[str, Any]] = []
         self.usage: dict[tuple[date, str], dict[str, Any]] = {}
+        self.plans: dict[str, dict[str, Any]] = {}
 
     async def once(self, key: str, fn: Callable[[], Awaitable[Any]], *,
                    forget_on: Callable[[Exception], bool] | None = None) -> Any:
@@ -182,6 +183,64 @@ class MemoryStore:
     async def add_idea(self, chat_id: int, user_id: int | None, text: str) -> int:
         self.ideas.append({"chat_id": chat_id, "user_id": user_id, "text": text, "status": "new"})
         return len(self.ideas)
+
+    async def new_ideas(self, limit: int = 20) -> list[dict[str, Any]]:
+        return [{"id": i, "text": x["text"]} for i, x in enumerate(self.ideas, 1) if x["status"] == "new"][:limit]
+
+    async def set_ideas(self, ids: list[int], status: str) -> None:
+        for i in ids:
+            if 1 <= i <= len(self.ideas):
+                self.ideas[i - 1]["status"] = status
+
+    # ── the week's plan (migrations/013) ──
+    async def add_plan(self, plan_id: str, week: str, posts: list[dict], sources: list, manifest: str,
+                       idea_ids: list[int]) -> None:
+        self.plans[plan_id] = {"id": plan_id, "week": week, "status": "draft", "posts": posts, "sources": sources,
+                               "manifest": manifest, "dropped": [], "idea_ids": list(idea_ids), "chat_id": None,
+                               "t": time.time()}
+
+    async def get_plan(self, plan_id: str) -> dict[str, Any] | None:
+        p = self.plans.get(plan_id)
+        return {k: v for k, v in p.items() if k != "t"} if p else None
+
+    async def latest_plan(self, week: str, status: str | None = None) -> dict[str, Any] | None:
+        found = [p for p in self.plans.values() if p["week"] == week and (status is None or p["status"] == status)]
+        return await self.get_plan(max(found, key=lambda p: p["t"])["id"]) if found else None
+
+    async def plan_sent(self, plan_id: str, chat_id: int) -> None:
+        p = self.plans[plan_id]
+        if p["status"] == "draft":
+            p |= {"status": "sent", "chat_id": int(chat_id)}
+
+    async def set_dropped(self, plan_id: str, index: int, dropped: bool) -> list[int] | None:
+        """The plan's dropped posts after this change, or None when the plan is no longer open."""
+        p = self.plans.get(plan_id)
+        if not p or p["status"] != "sent" or not 1 <= index <= len(p["posts"]):
+            return None
+        rest = [i for i in p["dropped"] if i != index]
+        p["dropped"] = sorted([*rest, index]) if dropped else rest
+        return list(p["dropped"])
+
+    async def decide_plan(self, plan_id: str, status: str) -> dict[str, Any] | None:
+        """sent → approved | rejected, once. The row as decided, or None."""
+        p = self.plans.get(plan_id)
+        if not p or p["status"] != "sent":
+            return None
+        p["status"] = status
+        return await self.get_plan(plan_id)
+
+    async def week_plans(self, week: str) -> list[dict[str, Any]]:
+        rows = sorted((p for p in self.plans.values() if p["week"] == week), key=lambda p: p["t"])
+        return [{"id": p["id"], "status": p["status"], "n": len(p["posts"]), "dropped": list(p["dropped"]),
+                 "created_at": datetime.fromtimestamp(p["t"], UTC), "decided_at": None} for p in rows]
+
+    async def replace_open_plans(self, week: str, keep: str) -> list[str]:
+        """The week's other draft/sent plans are closed (their buttons stop working). Their ids."""
+        out = [p["id"] for p in self.plans.values()
+               if p["week"] == week and p["id"] != keep and p["status"] in ("draft", "sent")]
+        for plan_id in out:
+            self.plans[plan_id]["status"] = "replaced"
+        return out
 
     async def add_usage(self, model: str, calls: int, input_tokens: int, output_tokens: int, cost_usd: float) -> None:
         key = (datetime.now(UTC).date(), model)
@@ -390,6 +449,59 @@ class PgStore:
         row = await self._one("insert into ideas (chat_id, user_id, text) values (%s, %s, %s) returning id",
                               (chat_id, user_id, text))
         return int(row["id"])
+
+    async def new_ideas(self, limit: int = 20) -> list[dict[str, Any]]:
+        return await self._all("select id, text from ideas where status = 'new' order by created_at limit %s",
+                               (limit,))
+
+    async def set_ideas(self, ids: list[int], status: str) -> None:
+        await self._one("update ideas set status = %s where id = any(%s)", (status, list(ids)))
+
+    # ── the week's plan (migrations/013) ──
+    async def add_plan(self, plan_id: str, week: str, posts: list[dict], sources: list, manifest: str,
+                       idea_ids: list[int]) -> None:
+        await self._one(
+            "insert into plans (id, week, posts, sources, manifest, idea_ids) values (%s, %s, %s::jsonb, %s::jsonb, %s, %s)",
+            (plan_id, week, json.dumps(posts, ensure_ascii=False), json.dumps(sources), manifest, list(idea_ids)))
+
+    _PLAN = "id, week, status, posts, sources, manifest, dropped, idea_ids, chat_id"
+
+    async def get_plan(self, plan_id: str) -> dict[str, Any] | None:
+        return await self._one(f"select {self._PLAN} from plans where id = %s", (plan_id,))
+
+    async def latest_plan(self, week: str, status: str | None = None) -> dict[str, Any] | None:
+        return await self._one(
+            f"select {self._PLAN} from plans where week = %s and (%s::text is null or status = %s) "
+            "order by created_at desc limit 1", (week, status, status))
+
+    async def plan_sent(self, plan_id: str, chat_id: int) -> None:
+        await self._one("update plans set status = 'sent', chat_id = %s where id = %s and status = 'draft'",
+                        (chat_id, plan_id))
+
+    async def set_dropped(self, plan_id: str, index: int, dropped: bool) -> list[int] | None:
+        row = await self._one(
+            "update plans set dropped = case when %s then "
+            "  (select array_agg(distinct x order by x) from unnest(array_append(dropped, %s)) as x) "
+            "  else array_remove(dropped, %s) end "
+            "where id = %s and status = 'sent' and %s between 1 and jsonb_array_length(posts) returning dropped",
+            (dropped, index, index, plan_id, index))
+        return list(row["dropped"]) if row else None
+
+    async def decide_plan(self, plan_id: str, status: str) -> dict[str, Any] | None:
+        return await self._one(
+            f"update plans set status = %s, decided_at = now() where id = %s and status = 'sent' returning {self._PLAN}",
+            (status, plan_id))
+
+    async def week_plans(self, week: str) -> list[dict[str, Any]]:
+        return await self._all(
+            "select id, status, jsonb_array_length(posts) as n, dropped, created_at, decided_at from plans "
+            "where week = %s order by created_at", (week,))
+
+    async def replace_open_plans(self, week: str, keep: str) -> list[str]:
+        rows = await self._all(
+            "update plans set status = 'replaced', decided_at = now() "
+            "where week = %s and id <> %s and status in ('draft', 'sent') returning id", (week, keep))
+        return [r["id"] for r in rows]
 
     async def add_usage(self, model: str, calls: int, input_tokens: int, output_tokens: int, cost_usd: float) -> None:
         await self._one(

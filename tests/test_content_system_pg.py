@@ -30,7 +30,7 @@ pytestmark = pytest.mark.skipif(not ADMIN_URL, reason="CONTENT_TEST_DB_URL not s
 MIGRATIONS = (
     "000_baseline_schema.sql", "005_review_tracking.sql", "006_chat_context.sql",
     "008_campaign_scheduled_day.sql", "009_campaign_design_fields.sql",
-    "010_rls_and_campaign_statuses.sql", "011_content_system.sql", "012_assistant.sql",
+    "010_rls_and_campaign_statuses.sql", "011_content_system.sql", "012_assistant.sql", "013_plans.sql",
 )
 APP_PASSWORD = "content-test-password"
 
@@ -65,6 +65,7 @@ def pg():
             conn.execute((ROOT / "migrations" / f).read_text(encoding="utf-8"))
         conn.execute((ROOT / "migrations" / "011_content_system.sql").read_text(encoding="utf-8"))  # idempotent
         conn.execute((ROOT / "migrations" / "012_assistant.sql").read_text(encoding="utf-8"))       # idempotent
+        conn.execute((ROOT / "migrations" / "013_plans.sql").read_text(encoding="utf-8"))           # idempotent
         conn.execute(f"alter role content_app with login password '{APP_PASSWORD}'")
     yield {"app": _url(admin_db, user="content_app", password=APP_PASSWORD), "admin": admin_db}
     with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
@@ -494,3 +495,69 @@ def test_the_assistant_on_postgres_proposes_and_a_tap_approves(pg, tmp_path, mon
     assert admin_rows(pg, "select status from content.proposals order by status") == \
         [("dismissed",), ("dismissed",), ("used",)]
     assert spent > 0
+
+
+def _plan_posts():
+    from tests.test_planning import a_plan
+
+    return a_plan()
+
+
+def test_the_plan_on_postgres(pg, tmp_path):
+    """migrations/013: drop/keep while sent, one decision, older plans replaced, no DELETE for content_app."""
+    plan = _plan_posts()
+
+    async def go():
+        db, *_ = await system(pg, tmp_path)
+        try:
+            assert (await db.verify(planning=True))[0] == []
+            store = PgStore(db.pool)
+            await store.add_plan("a1b2c3d4e5f6", plan.week, plan.posts, plan.sources, plan.manifest, plan.idea_ids)
+            before = await store.set_dropped("a1b2c3d4e5f6", 2, True)          # not sent yet
+            await store.plan_sent("a1b2c3d4e5f6", CHAT)
+            steps = [await store.set_dropped("a1b2c3d4e5f6", 5, True), await store.set_dropped("a1b2c3d4e5f6", 2, True),
+                     await store.set_dropped("a1b2c3d4e5f6", 2, True), await store.set_dropped("a1b2c3d4e5f6", 5, False),
+                     await store.set_dropped("a1b2c3d4e5f6", 9, True)]
+            first, second = await asyncio.gather(store.decide_plan("a1b2c3d4e5f6", "approved"),
+                                                 store.decide_plan("a1b2c3d4e5f6", "rejected"))
+            after = await store.set_dropped("a1b2c3d4e5f6", 1, True)
+            await store.add_plan("bbbbbbbbbbbb", plan.week, plan.posts, plan.sources, plan.manifest, [])
+            await store.add_plan("cccccccccccc", plan.week, plan.posts, plan.sources, plan.manifest, [])
+            await store.plan_sent("bbbbbbbbbbbb", CHAT)
+            replaced = await store.replace_open_plans(plan.week, "cccccccccccc")
+            latest = await store.latest_plan(plan.week)
+            approved = await store.latest_plan(plan.week, "approved")
+            listed = await store.week_plans(plan.week)
+            return before, steps, first, second, after, replaced, latest, approved, listed
+        finally:
+            await db.close()
+
+    before, steps, first, second, after, replaced, latest, approved, listed = run(go())
+    assert before is None
+    assert steps == [[5], [2, 5], [2, 5], [2], None]
+    assert [x is None for x in (first, second)].count(True) == 1          # one tap decides, the other gets nothing
+    decided = first or second
+    assert decided["posts"] == plan.posts and decided["dropped"] == [2] and decided["idea_ids"] == [7]
+    assert after is None and replaced == ["bbbbbbbbbbbb"]
+    assert latest["id"] == "cccccccccccc"
+    assert (approved or {}).get("id") == ("a1b2c3d4e5f6" if decided["status"] == "approved" else None)
+    assert [(r["id"], r["status"], r["n"]) for r in listed] == [
+        ("a1b2c3d4e5f6", decided["status"], 5), ("bbbbbbbbbbbb", "replaced", 5), ("cccccccccccc", "draft", 5)]
+    with psycopg.connect(pg["app"], autocommit=True) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege):
+        conn.execute("delete from content.plans")
+    with psycopg.connect(pg["admin"], autocommit=True) as conn, pytest.raises(psycopg.errors.CheckViolation):
+        conn.execute("insert into content.plans (id, week, posts, manifest) values ('x', '2026-47', '[]', '')")
+
+
+def test_verify_asks_for_migration_013_when_planning(pg, tmp_path):
+    async def go():
+        db, *_ = await system(pg, tmp_path)
+        try:
+            return await db.verify(planning=True), await db.verify()
+        finally:
+            await db.close()
+
+    with psycopg.connect(pg["admin"], autocommit=True) as conn:
+        conn.execute("drop table content.plans")
+    planning, plain = run(go())
+    assert planning[0] == ["content.plans missing (migrations/013)"] and plain[0] == []
