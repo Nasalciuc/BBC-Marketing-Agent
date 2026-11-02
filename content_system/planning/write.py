@@ -1,12 +1,15 @@
 """
 Writing one post of the plan: the text, the design fields of its style and the photo brief, from
 the candidate's facts only. The draft is checked as the manifest would check it (fields per style,
-caption rules, a fare the pricing engine can give) and by the fact check without AI: every number,
-airport code, month and weekday in what the post says must be in its facts. A refused draft is
-written once more with the reasons.
+caption rules, a fare the pricing engine can give for the post's own destination) and by the fact
+check without AI: every number, airport code, month and weekday in what the post says — its text,
+its design fields, its airports and cities — must be in its facts (or be the post's own day). The
+candidate's title is not a source: it is the model's own summary. A refused draft is written once
+more with the reasons; a malformed one is refused the same way, never a crash.
 """
 from __future__ import annotations
 
+import json
 import re
 import tomllib
 from datetime import date
@@ -21,18 +24,19 @@ from content_system.planning.curate import Pick
 from content_system.planning.llm import Call, PlanningError
 from content_system.planning.research import Candidate
 from content_system.visual.brief import RULES as PHOTO_RULES
-from content_system.visual.brief import device_key
-from services.design_system import PRICED_STYLES, PostDesign, Style, fare_for
+from content_system.visual.brief import same_device
+from services.design_system import PRICED_STYLES, PostDesign, Style, city_for, fare_for
 
 ATTEMPTS = 2
 TEXT_FIELDS = ("headline", "lead", "follow", "line", "tag")
 
 STYLE_FIELDS = {
-    Style.OFFER: "headline (≤70), tag (≤28, e.g. 'Longchamp · 4 Oct'), to_iata",
+    Style.OFFER: "headline (≤70), tag (≤28, e.g. 'Longchamp · 4 Oct'), to_iata = the destination airport",
     Style.EDITORIAL: "headline (≤70), line (≤72)",
     Style.FACT: "lead (≤24, the accent words, e.g. 'Six times'), follow (≤64), line (≤72)",
-    Style.PRICE_HERO: "follow (≤64), line (≤72), to_iata or fare_iatas",
-    Style.MULTI: "headline (≤70), destinations (2–6 city names), fare_iatas",
+    Style.PRICE_HERO: "follow (≤64), line (≤72), to_iata = the destination airport",
+    Style.MULTI: "headline (≤70), fare_iatas (2–6 airports, the destination first, each a city in the facts), "
+                 "destinations = the city of each of those airports, in the same order",
     Style.MINIMAL: "headline (≤70), line (≤72)",
 }
 
@@ -104,26 +108,88 @@ def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:40] or "post"
 
 
-def to_spec(draft: dict[str, Any], pick: Pick, photo: str) -> dict[str, Any]:
-    """The manifest [[post]] table for this draft."""
+def _object(value: Any) -> dict[str, Any]:
+    """A nested object of the tool's answer: as given, from a JSON string, or empty (then refused)."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def to_spec(draft: Any, pick: Pick, photo: str, cand: Candidate | None = None) -> dict[str, Any]:
+    """The manifest [[post]] table for this draft. The event's dates are the researched ones (the
+    candidate's), never the draft's."""
+    draft = _object(draft)
     spec: dict[str, Any] = {"day": pick.day.isoformat(), "photo": photo}
     for key in ("label", "name", "city", "caption_city", "route"):
-        spec[key] = str(draft.get(key) or "").strip()
-    for key in ("dates_start", "dates_end"):
-        if draft.get(key):
-            spec[key] = str(draft[key])
-    spec["body"] = str(draft.get("body") or "").strip()
-    design = {k: v for k, v in (draft.get("design") or {}).items() if v not in (None, "", [])}
+        spec[key] = _text(draft.get(key))
+    if cand is not None:
+        for key in ("dates_start", "dates_end"):
+            if getattr(cand, key):
+                spec[key] = getattr(cand, key).isoformat()
+    spec["body"] = _text(draft.get("body"))
+    design = {k: v for k, v in _object(draft.get("design")).items() if v not in (None, "", [])}
     design["style"] = pick.style.value
     spec["design"] = design
-    image = {k: v for k, v in (draft.get("image") or {}).items() if v not in (None, "")}
+    image = {k: v for k, v in _object(draft.get("image")).items() if v not in (None, "")}
     if image:
         spec["image"] = image
     return spec
 
 
+def _in_facts(city: str, cand: Candidate) -> bool:
+    text = cand.facts_text().lower()
+    return city.lower() in text or city.lower() == cand.city.lower()
+
+
+def fare_problems(design: PostDesign, cand: Candidate, airports: set[str]) -> tuple[list[str], list[str]]:
+    """(problems, the airports the post may name). The fare printed is the lowest over the codes, so
+    every code must belong to this post: offer and price_hero price exactly the destination; multi
+    prices the destination and other cities from the facts, and names exactly those cities."""
+    if design.style not in PRICED_STYLES:
+        return [], []
+    dest = cand.airport
+    if not dest:
+        return [f"{design.style} needs a fare, and this subject has no destination airport"], []
+    out: list[str] = []
+    if design.style == Style.MULTI:
+        codes = list(design.fare_iatas or [])
+        if dest not in codes:
+            out.append(f"multi: fare_iatas must include the destination, {dest}")
+        unknown = [c for c in codes if c not in airports]
+        if unknown:
+            return [*out, f"no fare for {', '.join(unknown)}: use airports from the list"], []
+        cities = [city_for(c) for c in codes]
+        if [d.strip().lower() for d in design.destinations or []] != [c.lower() for c in cities]:
+            out.append("multi: destinations must be the cities of fare_iatas, in order: " + ", ".join(cities))
+        out += [f"multi: {c} ({code}) is not in the research" for c, code in zip(cities, codes, strict=True)
+                if code != dest and not _in_facts(c, cand)]
+    else:
+        codes = [c for c in (design.fare_iatas or [design.to_iata]) if c]
+        if codes != [dest] or (design.to_iata and design.to_iata != dest):
+            out.append(f"the fare must be for the destination only: to_iata = {dest}, no other airports")
+        if design.style == Style.OFFER and design.fare_iatas:
+            out.append("offer: no fare_iatas, only to_iata")
+        if dest not in airports:
+            out.append(f"no fare for {dest}: a priced style needs an airport from the list")
+    if not out:
+        try:
+            fare_for(codes, design.trip)
+        except ValueError as e:
+            out.append(str(e))
+    return out, codes
+
+
 def check(spec: dict[str, Any], cand: Candidate, campaign_id: str, used_devices: dict[str, str],
           airports: set[str], idea_text: str = "") -> list[str]:
+    """What is wrong with this draft; [] when it can go in the plan. `used_devices` maps the other
+    posts' foreground devices to their day."""
     out: list[str] = []
     try:
         post = PostSpec.model_validate({**spec, "day": date.fromisoformat(spec["day"])})
@@ -131,25 +197,16 @@ def check(spec: dict[str, Any], cand: Candidate, campaign_id: str, used_devices:
     except (ValidationError, ValueError, TypeError) as e:
         errs = e.errors() if isinstance(e, ValidationError) else [{"loc": ("design",), "msg": str(e)}]
         return [f"{'.'.join(str(x) for x in er['loc'])}: {er['msg']}" for er in errs[:6]]
-    codes: list[str] = []
-    if design.style in PRICED_STYLES:
-        codes = [c for c in (design.fare_iatas or [design.to_iata]) if c]
-        unknown = [c for c in codes if c not in airports]
-        if unknown:
-            out.append(f"no fare for {', '.join(unknown)}: use airports from the list")
-        else:
-            try:
-                fare_for(codes, design.trip)
-            except ValueError as e:
-                out.append(str(e))
-        if cand.airport and cand.airport not in codes:
-            out.append(f"the fare must be for the destination, {cand.airport}, not {', '.join(codes) or 'none'}")
+    found, codes = fare_problems(design, cand, airports)
+    out += found
     out += caption_problems(compose_caption(post.body, design.style, post.caption_city), campaign_id)
-    said = "\n".join([post.body, post.label, post.name, post.route] +
-                     [str(getattr(design, f) or "") for f in TEXT_FIELDS])
+    said = "\n".join([post.body, post.label, post.name, post.route, post.city, post.caption_city,
+                      design.to_iata or "", " ".join(design.fare_iatas or []), " ".join(design.destinations or [])]
+                     + [str(getattr(design, f) or "") for f in TEXT_FIELDS])
+    # the researched dates are checked against the facts in research.check_candidates
     dated = [d for d in (post.day, cand.dates_start, cand.dates_end) if d]     # "Sunday 15 November" is a fact
-    known = "\n".join([cand.facts_text(), cand.title, cand.city, cand.country, cand.airport, "JFK New York",
-                       idea_text, " ".join(codes),       # the fare's own airports, not every one we can price
+    known = "\n".join([cand.facts_text(), cand.city, cand.country, cand.airport, "JFK New York", idea_text,
+                       " ".join(codes),             # this post's own airports, checked in fare_problems
                        " ".join(f"{d:%A %d %B %Y}" for d in dated)])
     new = invented(said, known)
     if new:
@@ -157,9 +214,9 @@ def check(spec: dict[str, Any], cand: Candidate, campaign_id: str, used_devices:
     if post.image is None:
         out.append("no photo brief")
     else:
-        key = device_key(post.image.device)
-        if key in used_devices:
-            out.append(f"the photo's foreground device repeats {used_devices[key]}: choose another")
+        twin = next((day for device, day in used_devices.items() if same_device(post.image.device, device)), None)
+        if twin is not None:
+            out.append(f"the photo's foreground device repeats {twin}: choose another")
     return out
 
 
@@ -187,7 +244,7 @@ async def write_post(call: Call, pick: Pick, cand: Candidate, *, campaign_id: st
         answer = await call(system, _prompt(pick, cand, idea_text, feedback), WRITE)
         for k, v in answer.usage.items():
             usage[k] = usage.get(k, 0) + v if isinstance(v, int) else v
-        spec = to_spec(answer.data, pick, photo)
+        spec = to_spec(answer.data, pick, photo, cand)
         found = check(spec, cand, campaign_id, used_devices, airports, idea_text)
         if not found:
             return spec, usage

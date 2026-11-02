@@ -1,7 +1,12 @@
 """
 Scout + research in one search session: candidates for the week's posts, each with concrete facts
 and the page each fact comes from. A fact whose URL was not among the pages the searches returned
-is dropped (no invented sources); a candidate left with fewer than two facts is dropped.
+is dropped (no invented sources); a candidate left with fewer than two facts is dropped, and so is
+an event whose dates are not in its own facts.
+
+What this proves, and what it doesn't: a fact's page really came up in the searches. It doesn't
+prove the page says what the fact says — the fact's wording is still the model's. The post is held
+to the facts' wording (write.check), and Betty reads every post with its links before approving.
 """
 from __future__ import annotations
 
@@ -13,6 +18,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from content_system.assistant.facts import facts as fact_tokens
 from content_system.planning.llm import Call, PlanningError
 from services.design_system import CONTENT_TO_STYLE
 
@@ -115,22 +121,54 @@ def _norm(url: str) -> str:
     return f"{host}{parts.path.rstrip('/')}" + (f"?{parts.query}" if parts.query else "")
 
 
-def check_candidates(raw: list[dict[str, Any]], sources: set[str], span: WeekSpan) -> tuple[list[Candidate], list[str]]:
-    """Keep what holds up. Returns (candidates, notes on what was dropped)."""
+def _decoded(value: Any) -> Any:
+    """Some answers carry a nested list or object as a JSON string."""
+    if isinstance(value, str) and value.strip()[:1] in ("[", "{"):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def _date_in_facts(d: date, facts_text: str) -> bool:
+    """The day and the month of the date are both among the facts' own numbers and months."""
+    have = fact_tokens(facts_text)
+    return f"#{d.day}" in have and f"month:{d.strftime('%b').lower()}" in have
+
+
+def check_candidates(raw: list[Any], sources: set[str], span: WeekSpan,
+                     idea_ids: set[int] | None = None) -> tuple[list[Candidate], list[str]]:
+    """Keep what holds up. Returns (candidates, notes on what was dropped). An idea_id that is not
+    one of the ideas offered (`idea_ids`) is cleared."""
     kept: list[Candidate] = []
     notes: list[str] = []
     seen: set[str] = set()
     found = {_norm(u): u for u in sources}
-    for item in raw:
-        item = {k: (None if v == "" and k in ("dates_start", "dates_end") else v) for k, v in item.items()}
-        facts = [{**f, "url": found[_norm(f["url"])]} for f in item.get("facts") or []
+    for n, item in enumerate(raw, 1):
+        item = _decoded(item)
+        if not isinstance(item, dict):
+            notes.append(f"candidate {n}: not an object, dropped")
+            continue
+        item = {k: (None if v == "" and k in ("dates_start", "dates_end", "idea_id") else v) for k, v in item.items()}
+        given = _decoded(item.get("facts"))
+        given = given if isinstance(given, list) else []
+        facts = [{**f, "url": found[_norm(f["url"])]} for f in given
                  if isinstance(f, dict) and isinstance(f.get("url"), str) and _norm(f["url"]) in found]
-        dropped = len(item.get("facts") or []) - len(facts)
+        dropped = len(given) - len(facts)
+        try:
+            item["idea_id"] = None if item.get("idea_id") is None else int(item["idea_id"])
+        except (TypeError, ValueError):
+            item["idea_id"] = None
+        if idea_ids is not None and item["idea_id"] is not None and item["idea_id"] not in idea_ids:
+            notes.append(f"{item.get('id', '?')}: idea {item.get('idea_id')} was not offered, cleared")
+            item["idea_id"] = None
         try:
             c = Candidate.model_validate({**item, "facts": facts})
         except ValidationError as e:
+            first = e.errors()[0]
             notes.append(f"{item.get('id', '?')}: dropped ({dropped} fact(s) without a found source; "
-                         f"{e.errors()[0]['loc'][0]}: {e.errors()[0]['msg']})")
+                         f"{'.'.join(map(str, first['loc'])) or 'candidate'}: {first['msg']})")
             continue
         if c.id in seen:
             notes.append(f"{c.id}: duplicate id, dropped")
@@ -140,6 +178,10 @@ def check_candidates(raw: list[dict[str, Any]], sources: set[str], span: WeekSpa
             continue
         if c.dates_end and c.dates_end < span.days[0]:
             notes.append(f"{c.id}: over before the week starts, dropped")
+            continue
+        unsourced = [d for d in (c.dates_start, c.dates_end) if d and not _date_in_facts(d, c.facts_text())]
+        if unsourced:
+            notes.append(f"{c.id}: its dates ({', '.join(map(str, unsourced))}) are not in its facts, dropped")
             continue
         if dropped:
             notes.append(f"{c.id}: {dropped} fact(s) without a found source removed")
@@ -160,5 +202,5 @@ async def scout(call: Call, span: WeekSpan, *, today: date, ideas: list[dict[str
             raw = None
     if not isinstance(raw, list):
         raise PlanningError("the research returned no candidate list")
-    kept, notes = check_candidates(raw, answer.sources, span)
+    kept, notes = check_candidates(raw, answer.sources, span, {int(i["id"]) for i in ideas})
     return kept, notes, answer.usage

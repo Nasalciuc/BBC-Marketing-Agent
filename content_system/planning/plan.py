@@ -16,7 +16,6 @@ from content_system.planning.curate import curate
 from content_system.planning.llm import Call, PlanningError
 from content_system.planning.research import Candidate, WeekSpan, scout
 from content_system.planning.write import slug, write_post
-from content_system.visual.brief import device_key
 
 ID_TAG = "V4"
 
@@ -32,7 +31,10 @@ class Plan:
     idea_ids: list[int] = field(default_factory=list)
 
 
-def _toml_value(v: Any) -> str:
+DATE_KEYS = ("day", "dates_start", "dates_end")
+
+
+def _toml_value(v: Any, *, is_date: bool = False) -> str:
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, (int, float)):
@@ -40,13 +42,10 @@ def _toml_value(v: Any) -> str:
     if isinstance(v, list):
         return "[" + ", ".join(_toml_value(x) for x in v) + "]"
     text = str(v)
-    if len(text) == 10 and text[4] == "-" and text[7] == "-":
-        try:
-            date.fromisoformat(text)
-            return text                          # a TOML date, as in the hand-written manifests
-        except ValueError:
-            pass
-    return json.dumps(text, ensure_ascii=False)  # JSON string escapes are valid TOML basic strings
+    if is_date:
+        return date.fromisoformat(text).isoformat()  # a TOML date, as in the hand-written manifests
+    # JSON string escapes are valid TOML basic strings; TOML also forbids DEL, which JSON leaves as is
+    return json.dumps(text, ensure_ascii=False).replace("\x7f", "\\u007f")
 
 
 def to_toml(span: WeekSpan, posts: list[dict[str, Any]], *, header: str = "", id_tag: str = ID_TAG) -> str:
@@ -54,7 +53,8 @@ def to_toml(span: WeekSpan, posts: list[dict[str, Any]], *, header: str = "", id
              f'week = "{span.name}"', f'photos = "{span.photos}"', f'id_tag = "{id_tag}"']
     for post in posts:
         lines += ["", "[[post]]"]
-        lines += [f"{k} = {_toml_value(v)}" for k, v in post.items() if k not in ("design", "image")]
+        lines += [f"{k} = {_toml_value(v, is_date=k in DATE_KEYS)}" for k, v in post.items()
+                  if k not in ("design", "image")]
         for table in ("design", "image"):
             if post.get(table):
                 lines += ["", f"[post.{table}]"] + [f"{k} = {_toml_value(v)}" for k, v in post[table].items()]
@@ -90,8 +90,14 @@ def priced_airports() -> set[str]:
             and calculate_price(ORIGIN_IATA, code, "round_trip", "business")}
 
 
+def photo_name(pick_day: date, candidate_id: str, tag: str) -> str:
+    """The photo's file name: day, subject and the plan's tag — a later plan never reuses an older
+    plan's photo (made from another brief) by accident."""
+    return f"{slug(f'{pick_day:%a}_{candidate_id}')[:32]}_{tag}" if tag else slug(f"{pick_day:%a}_{candidate_id}")
+
+
 async def make_plan(call: Call, span: WeekSpan, *, today: date, ideas: list[dict[str, Any]],
-                    airports: set[str], candidates_n: int = 12, max_searches: int = 10) -> Plan:
+                    airports: set[str], candidates_n: int = 12, max_searches: int = 10, photo_tag: str = "") -> Plan:
     if span.days[0] <= today:
         raise PlanningError(f"{span.name} starts publishing on {span.days[0]}: plan a week that hasn't started")
     usage: dict[str, Any] = {}
@@ -110,7 +116,7 @@ async def make_plan(call: Call, span: WeekSpan, *, today: date, ideas: list[dict
     photos: set[str] = set()
     for index, pick in enumerate(picks, 1):
         cand = by_id[pick.candidate_id]
-        photo = slug(f"{pick.day:%a}_{cand.id}")
+        photo = photo_name(pick.day, cand.id, photo_tag)
         while photo in photos:
             photo += "_2"
         photos.add(photo)
@@ -118,7 +124,7 @@ async def make_plan(call: Call, span: WeekSpan, *, today: date, ideas: list[dict
                                    photo=photo, used_devices=devices, airports=airports,
                                    idea_text=idea_text.get(cand.idea_id or -1, ""))
         _add(usage, u)
-        devices[device_key(spec["image"]["device"])] = f"{pick.day:%a}"
+        devices[spec["image"]["device"]] = f"{pick.day:%a}"
         posts.append(spec)
         sources.append(sorted({f.url for f in cand.facts}))
     manifest = to_toml(span, posts)

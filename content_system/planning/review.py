@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import date
 from typing import Any
 
 log = logging.getLogger("bbc.content.planning.review")
@@ -28,8 +29,6 @@ def parse(data: str) -> tuple[str, str, int | None] | None:
 
 
 def _day(post: dict[str, Any]) -> str:
-    from datetime import date
-
     return date.fromisoformat(post["day"]).strftime("%a %d %b")
 
 
@@ -44,6 +43,37 @@ def item_text(n: int, post: dict[str, Any], sources: list[str]) -> str:
     if sources:
         lines.append("\n".join(f"🔗 {u}" for u in sources[:3]))
     return "\n\n".join(lines)[:4000]
+
+
+def today() -> date:
+    return date.today()
+
+
+async def _safe_get(store: Any, plan_id: str) -> dict[str, Any] | None:
+    try:
+        return await store.get_plan(plan_id)
+    except Exception:  # only for the toast's wording
+        log.exception("could not re-read the plan")
+        return None
+
+
+def kept_days(plan: dict[str, Any]) -> list[date]:
+    return [date.fromisoformat(p["day"]) for i, p in enumerate(plan["posts"], 1) if i not in set(plan["dropped"])]
+
+
+def why_not_approve(plan: dict[str, Any], on: date) -> str:
+    """Why ✅ can't be taken now, in Betty's words, or ""."""
+    days = kept_days(plan)
+    if not days:
+        return "Ai scos toate postările — pune înapoi măcar una sau cere alt plan"
+    past = [d for d in days if d < on]
+    if past:
+        return (f"Postarea de {past[0]:%a %d %b} e pentru o zi care a trecut — scoate-o sau cere alt plan")
+    if plan["dropped"]:
+        found = still_valid(plan)
+        if found:
+            return f"Fără cele scoase, săptămâna nu mai trece regulile: {found[0]} — pune una înapoi sau cere alt plan"
+    return ""
 
 
 def still_valid(plan: dict[str, Any]) -> list[str]:
@@ -65,21 +95,29 @@ def final_buttons(plan_id: str) -> dict:
                                 [{"text": "🔁 Vreau alt plan", "callback_data": f"pl:no:{plan_id}"}]]}
 
 
-async def send_plan(store: Any, telegram: Any, chat_id: int | str, plan: dict[str, Any]) -> None:
-    """Once per plan (the caller wraps it in store.once)."""
+async def send_plan(store: Any, telegram: Any, chat_id: int | str, plan: dict[str, Any]) -> int:
+    """Send the plan, or the part of it that hasn't gone out yet: each message is sent once
+    (store.once per message), so running it again after a failure sends only what is missing. The
+    plan is open for taps ("sent") as soon as the header is out. Returns the chat id."""
     posts, sources = plan["posts"], plan["sources"]
     lines = "\n".join(f"{i}. {_day(p)} · {p['label']}" for i, p in enumerate(posts, 1))
-    await telegram.call("sendMessage", {"chat_id": chat_id, "text": (
-        f"🗓 Planul pentru {plan['week']} · {len(posts)} postări\n\n{lines}\n\n"
-        "Mai jos, fiecare cu textul, poza descrisă și sursele. ❌ scoate ce nu vrei, apoi ✅ Aprob planul. "
-        "Pozele și postările se fac după aprobare și vin la tine, fiecare cu butoanele ei.")})
+
+    async def header() -> int:
+        msg = await telegram.call("sendMessage", {"chat_id": chat_id, "text": (
+            f"🗓 Planul pentru {plan['week']} · {len(posts)} postări\n\n{lines}\n\n"
+            "Mai jos, fiecare cu textul, poza descrisă și sursele. ❌ scoate ce nu vrei, apoi ✅ Aprob planul. "
+            "Pozele și postările se fac după aprobare și vin la tine, fiecare cu butoanele ei.")})
+        return int((msg.get("chat") or {}).get("id", chat_id))
+
+    chat = int(await store.once(f"plan-msg:{plan['id']}:0", header))
+    await store.plan_sent(plan["id"], chat)
     for i, post in enumerate(posts, 1):
-        await telegram.call("sendMessage", {"chat_id": chat_id, "text": item_text(i, post, sources[i - 1]),
-                                            "reply_markup": item_buttons(plan["id"], i, False),
-                                            "link_preview_options": {"is_disabled": True}})
-    await telegram.call("sendMessage", {"chat_id": chat_id, "text": f"Planul {plan['week']}: gata?",
-                                        "reply_markup": final_buttons(plan["id"])})
-    await store.plan_sent(plan["id"], int(chat_id))
+        await store.once(f"plan-msg:{plan['id']}:{i}", lambda i=i, post=post: telegram.call("sendMessage", {
+            "chat_id": chat, "text": item_text(i, post, sources[i - 1]),
+            "reply_markup": item_buttons(plan["id"], i, False), "link_preview_options": {"is_disabled": True}}))
+    await store.once(f"plan-msg:{plan['id']}:end", lambda: telegram.call("sendMessage", {
+        "chat_id": chat, "text": f"Planul {plan['week']}: gata?", "reply_markup": final_buttons(plan["id"])}))
+    return chat
 
 
 async def _answer(telegram: Any, callback_id: str, text: str) -> None:
@@ -130,17 +168,14 @@ async def handle_callback(lv: Any, cb: dict, update_id: int | None, owner_chat_i
         if plan is None or plan["status"] != "sent":
             await _answer(tg, callback_id, "Planul acesta e deja închis")
             return
-        kept = len(plan["posts"]) - len(plan["dropped"])
-        if action == "ok" and kept == 0:
-            await _answer(tg, callback_id, "Ai scos toate postările — pune înapoi măcar una sau cere alt plan")
-            return
-        if action == "ok" and plan["dropped"]:
-            found = still_valid(plan)
-            if found:
-                await _answer(tg, callback_id, "Fără cele scoase, săptămâna nu mai trece regulile: "
-                                               f"{found[0]} — pune una înapoi sau cere alt plan")
+        if action == "ok":
+            refusal = why_not_approve(plan, today())
+            if refusal:
+                await _answer(tg, callback_id, refusal)
                 return
-        decided = await store.decide_plan(plan_id, "approved" if action == "ok" else "rejected")
+        # decided only on the exact posts checked above: a ❌ that lands in between makes this miss
+        decided = await store.decide_plan(plan_id, "approved" if action == "ok" else "rejected",
+                                          dropped=list(plan["dropped"]))
     except Exception:
         log.exception("plan tap failed")
         if key:
@@ -148,9 +183,13 @@ async def handle_callback(lv: Any, cb: dict, update_id: int | None, owner_chat_i
         await _answer(tg, callback_id, "⚠️ N-a mers — apasă din nou")
         return
     if decided is None:
-        await _answer(tg, callback_id, "Planul acesta e deja închis")
+        now = await _safe_get(store, plan_id)
+        await _answer(tg, callback_id, "Planul s-a schimbat chiar acum — apasă din nou"
+                      if now is not None and now["status"] == "sent" else "Planul acesta e deja închis")
         return
     week = decided["week"]
+    kept = len(decided["posts"]) - len(decided["dropped"])
+    who = (cb.get("from") or {}).get("first_name") or "Betty"
     if action == "ok" and decided.get("idea_ids"):
         try:
             await store.set_ideas(list(decided["idea_ids"]), "planned")
@@ -160,13 +199,14 @@ async def handle_callback(lv: Any, cb: dict, update_id: int | None, owner_chat_i
         await _edit(tg, message, text=f"✅ Plan aprobat: {kept} postări ({len(decided['dropped'])} scoase). "
                                       "Urmează pozele și postările, fiecare cu butoanele ei.")
         await _answer(tg, callback_id, "✅ Plan aprobat")
-        note = (f"🗓 Betty a aprobat planul {week}: {kept} postări"
+        note = (f"🗓 {who} a aprobat planul {week}: {kept} postări"
                 + (f", scoase: {', '.join(map(str, decided['dropped']))}" if decided["dropped"] else "")
                 + f".\nPe laptop: railway run python -m content_system build --week {week}")
     else:
         await _edit(tg, message, text="🔁 Am cerut alt plan. Vine de la Scaler.")
         await _answer(tg, callback_id, "Am cerut alt plan")
-        note = f"🔁 Betty vrea alt plan pentru {week}.\nPe laptop: railway run python -m content_system plan --week {week} --send"
+        note = (f"🔁 {who} vrea alt plan pentru {week}.\n"
+                f"Pe laptop: railway run python -m content_system plan --week {week} --send")
     if owner_chat_id:
         try:
             await store.once(f"plan-note:{plan_id}", lambda: tg.call("sendMessage", {"chat_id": owner_chat_id, "text": note}))

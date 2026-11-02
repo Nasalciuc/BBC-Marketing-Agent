@@ -561,3 +561,32 @@ def test_verify_asks_for_migration_013_when_planning(pg, tmp_path):
         conn.execute("drop table content.plans")
     planning, plain = run(go())
     assert planning[0] == ["content.plans missing (migrations/013)"] and plain[0] == []
+
+
+def test_a_plan_decides_only_on_the_posts_that_were_checked_on_postgres(pg, tmp_path):
+    """An approve checked with dropped=[2] must not land after a ❌ on post 3; ideas come newest first."""
+    plan = _plan_posts()
+
+    async def go():
+        db, *_ = await system(pg, tmp_path)
+        try:
+            store = PgStore(db.pool)
+            await store.add_plan("a1b2c3d4e5f6", plan.week, plan.posts, plan.sources, plan.manifest, [])
+            await store.plan_sent("a1b2c3d4e5f6", CHAT)
+            fresh = await store.decide_plan("a1b2c3d4e5f6", "approved", dropped=[])
+            assert fresh is not None
+            await store.add_plan("bbbbbbbbbbbb", plan.week, plan.posts, plan.sources, plan.manifest, [])
+            await store.plan_sent("bbbbbbbbbbbb", CHAT)
+            await store.set_dropped("bbbbbbbbbbbb", 2, True)
+            await store.set_dropped("bbbbbbbbbbbb", 3, True)                  # landed after the check
+            stale = await store.decide_plan("bbbbbbbbbbbb", "approved", dropped=[2])
+            current = await store.decide_plan("bbbbbbbbbbbb", "approved", dropped=[3, 2])
+            for i in range(3):
+                await store.add_idea(CHAT, 1, f"idea {i}")
+            return stale, current, await store.new_ideas(2)
+        finally:
+            await db.close()
+
+    stale, current, ideas = run(go())
+    assert stale is None and current["dropped"] == [2, 3]
+    assert [i["text"] for i in ideas] == ["idea 2", "idea 1"]

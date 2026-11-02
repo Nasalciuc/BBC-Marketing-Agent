@@ -185,7 +185,9 @@ class MemoryStore:
         return len(self.ideas)
 
     async def new_ideas(self, limit: int = 20) -> list[dict[str, Any]]:
-        return [{"id": i, "text": x["text"]} for i, x in enumerate(self.ideas, 1) if x["status"] == "new"][:limit]
+        """The newest first: old ideas never picked must not crowd out this week's."""
+        fresh = [{"id": i, "text": x["text"]} for i, x in enumerate(self.ideas, 1) if x["status"] == "new"]
+        return fresh[::-1][:limit]
 
     async def set_ideas(self, ids: list[int], status: str) -> None:
         for i in ids:
@@ -221,10 +223,11 @@ class MemoryStore:
         p["dropped"] = sorted([*rest, index]) if dropped else rest
         return list(p["dropped"])
 
-    async def decide_plan(self, plan_id: str, status: str) -> dict[str, Any] | None:
-        """sent → approved | rejected, once. The row as decided, or None."""
+    async def decide_plan(self, plan_id: str, status: str, *, dropped: list[int] | None = None) -> dict[str, Any] | None:
+        """sent → approved | rejected, once — and, with `dropped`, only if the dropped posts are still
+        exactly those (what was checked). The row as decided, or None."""
         p = self.plans.get(plan_id)
-        if not p or p["status"] != "sent":
+        if not p or p["status"] != "sent" or (dropped is not None and sorted(dropped) != p["dropped"]):
             return None
         p["status"] = status
         return await self.get_plan(plan_id)
@@ -451,8 +454,8 @@ class PgStore:
         return int(row["id"])
 
     async def new_ideas(self, limit: int = 20) -> list[dict[str, Any]]:
-        return await self._all("select id, text from ideas where status = 'new' order by created_at limit %s",
-                               (limit,))
+        return await self._all(
+            "select id, text from ideas where status = 'new' order by created_at desc, id desc limit %s", (limit,))
 
     async def set_ideas(self, ids: list[int], status: str) -> None:
         await self._one("update ideas set status = %s where id = any(%s)", (status, list(ids)))
@@ -487,10 +490,11 @@ class PgStore:
             (dropped, index, index, plan_id, index))
         return list(row["dropped"]) if row else None
 
-    async def decide_plan(self, plan_id: str, status: str) -> dict[str, Any] | None:
+    async def decide_plan(self, plan_id: str, status: str, *, dropped: list[int] | None = None) -> dict[str, Any] | None:
         return await self._one(
-            f"update plans set status = %s, decided_at = now() where id = %s and status = 'sent' returning {self._PLAN}",
-            (status, plan_id))
+            "update plans set status = %s, decided_at = now() where id = %s and status = 'sent' "
+            f"and (%s::int[] is null or dropped = %s::int[]) returning {self._PLAN}",
+            (status, plan_id, None if dropped is None else sorted(dropped), None if dropped is None else sorted(dropped)))
 
     async def week_plans(self, week: str) -> list[dict[str, Any]]:
         return await self._all(

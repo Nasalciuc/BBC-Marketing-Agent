@@ -13,6 +13,7 @@ python -m content_system <command>
   plan     --week 2026-W46 [--send]  research the week and write its plan (ANTHROPIC_API_KEY); --send:
            [--candidates 12]         store it and send it to Betty on Telegram          (railway run)
   plan     --week 2026-W46 --status  the week's plans and what Betty decided           (railway run)
+  plan     --week 2026-W46 --resend <id>   finish sending a stored plan (after a failure) (railway run)
   build    --week 2026-W46           the plan Betty approved → weeks/2026-W46.toml, its photos, the render
            [--replace] [--no-photos] [--candidates 3]                                   (railway run)
            then `send weeks/2026-W46.toml`: each post still goes to Betty for its own ✅
@@ -380,13 +381,15 @@ async def cmd_plan(args: argparse.Namespace) -> None:
     from content_system.assistant.usage import cost
     from content_system.planning.llm import PlanningError, anthropic_call
     from content_system.planning.plan import make_plan, priced_airports
-    from content_system.planning.review import send_plan
     from content_system.settings import db_url_problem, get_settings
     from content_system.store import PgStore
 
     span = _span(args.week)
     if args.status:
         await _plans_status(span)
+        return
+    if args.resend:
+        await _resend(span, args.resend)
         return
     cs = get_settings()
     if not app.anthropic_api_key:
@@ -412,10 +415,12 @@ async def cmd_plan(args: argparse.Namespace) -> None:
         days = ", ".join(f"{d:%a %d %b}" for d in span.days)
         print(f"{span.name} · {len(span.days)} posts ({days}) · {len(ideas)} idea(s) from Betty · {cs.plan_model}, "
               f"up to {cs.plan_searches} web searches — this takes a few minutes")
+        plan_id = secrets.token_hex(6)
         try:
             plan = await make_plan(anthropic_call(cs.plan_model, app.anthropic_api_key), span, today=_today(),
                                    ideas=ideas, airports=priced_airports(),
-                                   candidates_n=args.candidates or cs.plan_candidates, max_searches=cs.plan_searches)
+                                   candidates_n=args.candidates or cs.plan_candidates, max_searches=cs.plan_searches,
+                                   photo_tag=plan_id[:6])
         except PlanningError as e:
             stop(f"no plan: {e}")
         for note in plan.notes:
@@ -426,7 +431,6 @@ async def cmd_plan(args: argparse.Namespace) -> None:
         usd = cost(cs.plan_model, u.get("input_tokens", 0), u.get("output_tokens", 0)) + u.get("searches", 0) * 0.01
         print(f"  cost ≈ ${usd:.2f} ({u.get('input_tokens', 0)} in, {u.get('output_tokens', 0)} out, "
               f"{u.get('searches', 0)} searches)")
-        plan_id = secrets.token_hex(6)
         out = ROOT / cs.output_root / span.name / f"plan-{plan_id}.toml"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(plan.manifest, encoding="utf-8")
@@ -436,17 +440,48 @@ async def cmd_plan(args: argparse.Namespace) -> None:
                   " (a new plan, researched again)")
             return
         await store.add_plan(plan_id, span.name, plan.posts, plan.sources, plan.manifest, plan.idea_ids)
-        closed = await store.replace_open_plans(span.name, plan_id)
-        if closed:
-            print(f"  · older plan(s) {', '.join(closed)} closed: their buttons no longer work")
-        services = _services(app, cs, store)
-        row = await store.get_plan(plan_id)
-        await store.once(f"plan-send:{plan_id}",
-                         lambda: send_plan(store, services.telegram, services.chat_id, row))
-        print(f"✓ sent to Betty on Telegram. Then: python -m content_system plan --week {span.name} --status")
+        await _send_stored(app, cs, store, span, plan_id)
     finally:
         if db is not None:
             await db.close()
+
+
+async def _send_stored(app, cs, store, span, plan_id: str) -> None:
+    """Send a stored plan (what hasn't gone out yet), then close the week's older open plans."""
+    from content_system.planning.review import send_plan
+
+    services = _services(app, cs, store)
+    row = await store.get_plan(plan_id)
+    try:
+        await send_plan(store, services.telegram, services.chat_id, row)
+    except Exception as e:  # noqa: BLE001 — the plan is stored: say how to finish sending it
+        stop(f"plan {plan_id} is stored but not all of it reached Telegram ({type(e).__name__}: {e}). "
+             f"Older plans are still open. Finish it with: python -m content_system plan --week {span.name} "
+             f"--resend {plan_id}")
+    closed = await store.replace_open_plans(span.name, plan_id)
+    if closed:
+        print(f"  · older plan(s) {', '.join(closed)} closed: their buttons no longer work")
+    print(f"✓ plan {plan_id} sent to Betty on Telegram. Then: python -m content_system plan --week {span.name} --status")
+
+
+async def _resend(span, plan_id: str) -> None:
+    from content_system.store import PgStore
+
+    app, cs = _require("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+    db = await _open(cs)
+    try:
+        problems, _ = await db.verify(planning=True)
+        if problems:
+            stop("database not ready: " + "; ".join(problems))
+        store = PgStore(db.pool)
+        row = await store.get_plan(plan_id)
+        if row is None or row["week"] != span.name:
+            stop(f"no plan {plan_id} for {span.name} — python -m content_system plan --week {span.name} --status")
+        if row["status"] not in ("draft", "sent"):
+            stop(f"plan {plan_id} is {row['status']}: nothing to send")
+        await _send_stored(app, cs, store, span, plan_id)
+    finally:
+        await db.close()
 
 
 async def cmd_build(args: argparse.Namespace) -> None:
@@ -465,6 +500,12 @@ async def cmd_build(args: argparse.Namespace) -> None:
         await db.close()
     if plan is None:
         stop(f"no approved plan for {span.name} — python -m content_system plan --week {span.name} --status")
+    from content_system.planning.review import kept_days
+
+    past = [d for d in kept_days(plan) if d < _today()]
+    if past:
+        stop(f"the plan has posts for days that have passed ({', '.join(f'{d:%a %d %b}' for d in past)}) — "
+             f"make a new plan: python -m content_system plan --week {span.name} --send")
     text = kept_manifest(span, plan["posts"], plan["dropped"],
                          header=f"{span.name} — plan {plan['id']}, approved by Betty on Telegram (content_system build)")
     problems = check_week(text)
@@ -480,8 +521,8 @@ async def cmd_build(args: argparse.Namespace) -> None:
     if args.no_photos:
         print(f"Then: python -m content_system photos {rel}, render {rel}, send {rel}")
         return
-    await cmd_photos(argparse.Namespace(manifest=rel, post=None, again=False, candidates=args.candidates))
-    await cmd_render(argparse.Namespace(manifest=rel))
+    await cmd_photos(argparse.Namespace(manifest=str(target), post=None, again=False, candidates=args.candidates))
+    await cmd_render(argparse.Namespace(manifest=str(target)))
     print(f"\nLook at the preview; then each post goes to Betty for its own ✅:\n"
           f"  railway run python -m content_system send {rel}")
 
@@ -510,6 +551,7 @@ def main(argv: list[str] | None = None) -> None:
     pl.add_argument("--week", required=True, help="ISO week, e.g. 2026-W46")
     pl.add_argument("--send", action="store_true", help="store the plan and send it to Betty on Telegram")
     pl.add_argument("--status", action="store_true", help="the week's plans and what Betty decided")
+    pl.add_argument("--resend", metavar="PLAN_ID", default="", help="send what didn't go out of a stored plan")
     pl.add_argument("--candidates", type=int, default=0, help="candidates to research (default 12)")
     b = sub.add_parser("build")
     b.add_argument("--week", required=True)

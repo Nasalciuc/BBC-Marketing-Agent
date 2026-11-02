@@ -107,8 +107,17 @@ async def curate(call: Call, span: WeekSpan, candidates: list[Candidate], *, ide
         answer = await call(SYSTEM.format(fit=fit), _prompt(span, candidates, ideas, feedback), CHOOSE)
         for k, v in answer.usage.items():
             usage[k] = usage.get(k, 0) + v if isinstance(v, int) else v
+        raw = answer.data.get("picks")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError:
+                raw = None
+        if not isinstance(raw, list):
+            feedback = "invalid answer: picks must be a list of objects"
+            continue
         try:
-            picks = sorted((Pick.model_validate(p) for p in answer.data.get("picks") or []), key=lambda p: p.day)
+            picks = sorted((Pick.model_validate(p) for p in raw), key=lambda p: p.day)
         except ValidationError as e:
             feedback = f"invalid answer: {e.errors()[0]['msg']}"
             continue

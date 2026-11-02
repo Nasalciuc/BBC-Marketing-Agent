@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import tomllib
 from datetime import date
 from types import SimpleNamespace
@@ -20,7 +21,7 @@ from content_system.manifest import load_week
 from content_system.planning import review
 from content_system.planning.curate import Pick, curate, problems
 from content_system.planning.llm import PlanningError, ToolAnswer
-from content_system.planning.plan import check_week, kept_manifest, make_plan, priced_airports, to_toml
+from content_system.planning.plan import check_week, kept_manifest, make_plan, photo_name, priced_airports, to_toml
 from content_system.planning.research import check_candidates, week_span
 from content_system.planning.write import check, to_spec, write_post
 from content_system.store import MemoryStore
@@ -244,11 +245,12 @@ def test_the_choice_gives_up_after_three_refusals():
 
 # ── the drafts ──
 
-def checked(i: int, **change: Any) -> list[str]:
+def checked(i: int, cand_change: dict[str, Any] | None = None, **change: Any) -> list[str]:
     cands = by_id()
     pick = Pick.model_validate(PICKS[i])
-    spec = to_spec({**DRAFTS[i], **change}, pick, "photo")
-    return check(spec, cands[pick.candidate_id], "2026-W47-V4-001", {}, AIRPORTS)
+    cand = cands[pick.candidate_id].model_copy(update=cand_change or {})
+    spec = to_spec({**DRAFTS[i], **change}, pick, "photo", cand)
+    return check(spec, cand, "2026-W47-V4-001", {}, AIRPORTS)
 
 
 def test_the_drafts_pass_as_written():
@@ -270,11 +272,109 @@ def test_a_draft_follows_the_caption_and_design_rules():
     assert any("requires: headline" in f for f in checked(1, design={"style": "editorial", "line": "x"}))
     # the style is the choice's, not the draft's
     assert checked(2, design=dict(DRAFTS[2]["design"], style="offer")) == []
-    found = checked(3, design=dict(DRAFTS[3]["design"], to_iata="XXX"))
-    assert any("no fare for XXX" in f for f in found)
-    # a fare the engine can give, but for another place than the post's
-    found = checked(3, design=dict(DRAFTS[3]["design"], to_iata="LHR"))
-    assert "the fare must be for the destination, CPT, not LHR" in found
+    assert any("pattern" in f or "XXX" in f for f in checked(3, design=dict(DRAFTS[3]["design"], to_iata="XX1")))
+    assert checked(4, image=None) == ["no photo brief"]
+
+
+# the fare printed is the lowest over the codes: each code must belong to this post
+@pytest.mark.parametrize(("i", "design"), [
+    (3, {"style": "price_hero", "follow": "Summer.", "line": "x", "to_iata": "LHR"}),
+    (3, {"style": "price_hero", "follow": "Summer.", "line": "x", "fare_iatas": ["CPT", "YVR"]}),
+    (3, {"style": "price_hero", "follow": "Summer.", "line": "x", "to_iata": "CPT", "fare_iatas": ["CPT", "YVR"]}),
+    (0, {"style": "offer", "headline": "Miami.", "tag": "Art Basel · 3 Dec", "to_iata": "MIA",
+         "fare_iatas": ["MIA", "YVR"]}),
+    (0, {"style": "offer", "headline": "Miami.", "tag": "Art Basel · 3 Dec", "to_iata": "YVR", "fare_iatas": ["MIA"]}),
+])
+def test_a_fare_for_another_place_is_refused(i, design):
+    found = checked(i, design=design)
+    assert any("the fare must be for the destination only" in f or "no fare_iatas" in f for f in found), found
+
+
+def test_a_multi_post_names_exactly_its_researched_cities():
+    johannesburg = [{"text": "Johannesburg is two hours from Cape Town by air.", "url": "https://www.capetown.travel/summer"}]
+    cand = {"facts": [*by_id()["cape-town-summer"].facts, *map(lambda f: type(by_id()["cape-town-summer"].facts[0])(**f),
+                                                                 johannesburg)]}
+    multi = {"style": "multi", "headline": "Two cities, one summer.", "fare_iatas": ["CPT", "JNB"],
+             "destinations": ["Cape Town", "Johannesburg"]}
+    pick = dict(PICKS[3], style="multi")
+    cands = by_id()
+    c = cands["cape-town-summer"].model_copy(update=cand)
+
+    def run_check(design):
+        spec = to_spec({**DRAFTS[3], "design": design}, Pick.model_validate(pick), "photo", c)
+        return check(spec, c, "2026-W47-V4-004", {}, AIRPORTS)
+
+    assert run_check(multi) == []
+    assert any("destinations must be the cities of fare_iatas" in f
+               for f in run_check(dict(multi, destinations=["Cape Town", "Durban"])))
+    found = run_check(dict(multi, fare_iatas=["CPT", "SYD"], destinations=["Cape Town", "Sydney"]))
+    assert "multi: Sydney (SYD) is not in the research" in found
+    assert any("must include the destination, CPT" in f
+               for f in run_check(dict(multi, fare_iatas=["JNB", "NBO"], destinations=["Johannesburg", "Nairobi"])))
+
+
+def test_every_printed_field_is_fact_checked():
+    found = checked(0, caption_city="Osaka KIX")
+    assert any(f.startswith("facts that are not in the research:") and "KIX" in f for f in found)
+    # the candidate's title is the model's summary, not a source
+    found = checked(0, cand_change={"title": "Art Basel, 25th edition, 1,200 VIPs"},
+                    body=DRAFTS[0]["body"] + "\n\nThe 25th edition.")
+    assert any("25" in f for f in found)
+
+
+def test_the_event_dates_are_the_researched_ones_not_the_draft_s():
+    cands = by_id()
+    pick = Pick.model_validate(PICKS[0])
+    spec = to_spec({**DRAFTS[0], "dates_start": "2027-01-09", "dates_end": "2027-01-10"}, pick, "p",
+                   cands["art-basel-miami"])
+    assert (spec["dates_start"], spec["dates_end"]) == ("2026-12-03", "2026-12-06")
+
+
+def test_research_drops_an_event_whose_dates_are_not_in_its_facts():
+    unsourced = dict(CANDIDATES[0], id="wrong-dates", dates_start="2026-12-12", dates_end="2026-12-13")
+    kept, notes = check_candidates([unsourced], SOURCES, SPAN)
+    assert kept == [] and "wrong-dates: its dates (2026-12-12, 2026-12-13) are not in its facts, dropped" in notes
+
+
+@pytest.mark.parametrize("draft", [
+    {**DRAFTS[0], "design": json.dumps(DRAFTS[0]["design"]), "image": json.dumps(DRAFTS[0]["image"])},
+])
+def test_nested_objects_sent_as_json_strings_are_read(draft):
+    cands = by_id()
+    pick = Pick.model_validate(PICKS[0])
+    assert check(to_spec(draft, pick, "p", cands["art-basel-miami"]), cands["art-basel-miami"], "c", {}, AIRPORTS) == []
+
+
+@pytest.mark.parametrize("bad", [{**DRAFTS[0], "design": ["offer"]}, {**DRAFTS[0], "image": "a lounger"},
+                                 {**DRAFTS[0], "body": 5}, "not an object", None])
+def test_a_malformed_draft_is_refused_not_a_crash(bad):
+    cands = by_id()
+    pick = Pick.model_validate(PICKS[0])
+    assert check(to_spec(bad, pick, "p", cands["art-basel-miami"]), cands["art-basel-miami"], "c", {}, AIRPORTS)
+
+
+def test_a_malformed_draft_is_written_again():
+    cands = by_id()
+    model = Model(write_post=[{**DRAFTS[0], "design": "{not json"}, DRAFTS[0]])
+    spec, _ = run(write_post(model, Pick.model_validate(PICKS[0]), cands["art-basel-miami"], campaign_id="c",
+                             photo="p", used_devices={}, airports=AIRPORTS))
+    assert spec["design"]["headline"] == "Miami, for the art." and len(model.calls) == 2
+
+
+def test_malformed_research_and_choice_are_handled():
+    raw = ["not an object", json.dumps(CANDIDATES[1]), dict(CANDIDATES[2], facts=json.dumps(CANDIDATES[2]["facts"]))]
+    kept, notes = check_candidates(raw, SOURCES, SPAN)
+    assert [c.id for c in kept] == ["tokyo-autumn", "doha-lounge"] and "candidate 1: not an object, dropped" in notes
+    model = Model(choose_posts=[{"picks": 5}, {"picks": json.dumps(PICKS)}])
+    chosen, _ = run(curate(model, SPAN, list(by_id().values()), ideas=[], airports=AIRPORTS))
+    assert len(chosen) == 5 and "picks must be a list" in model.prompts("choose_posts")[1]
+
+
+def test_an_idea_that_was_not_offered_is_cleared():
+    kept, notes = check_candidates([dict(CANDIDATES[1], idea_id=3)], SOURCES, SPAN, {7})
+    assert kept[0].idea_id is None and "tokyo-autumn: idea 3 was not offered, cleared" in notes
+    kept, _ = check_candidates([dict(CANDIDATES[1], idea_id="7")], SOURCES, SPAN, {7})
+    assert kept[0].idea_id == 7
     assert checked(4, image=None) == ["no photo brief"]
 
 
@@ -325,9 +425,23 @@ def test_the_plan_is_a_manifest_the_loader_accepts(tmp_path):
 
 
 def test_the_toml_escapes_what_the_model_writes():
-    post = dict(a_plan().posts[0], body='He said "go".\nA \\ backslash, a tab\there.')
+    post = dict(a_plan().posts[0], body='He said "go".\nA \\ backslash, a tab\there, a DEL \x7f.')
     text = to_toml(SPAN, [post])
     assert tomllib.loads(text)["post"][0]["body"] == post["body"]
+
+
+def test_only_the_date_fields_are_written_as_toml_dates():
+    post = a_plan().posts[0]
+    post = dict(post, image=dict(post["image"], time="2026-11-22"), design=dict(post["design"], tag="2026-11-22"))
+    read = tomllib.loads(to_toml(SPAN, [post]))["post"][0]
+    assert read["image"]["time"] == "2026-11-22" and read["design"]["tag"] == "2026-11-22"
+    assert read["day"] == date(2026, 11, 18) and read["dates_start"] == date(2026, 12, 3)
+
+
+def test_photo_names_carry_the_plan_s_tag():
+    assert photo_name(date(2026, 11, 18), "art-basel-miami", "a1b2c3") == "wed_art_basel_miami_a1b2c3"
+    long = photo_name(date(2026, 11, 18), "x" * 40, "a1b2c3")
+    assert long.endswith("_a1b2c3") and len(long) <= 40
 
 
 def test_a_plan_for_a_week_that_has_started_is_refused():
@@ -354,7 +468,8 @@ def test_kept_manifest_keeps_betty_s_posts_in_order():
 # ── Betty's buttons ──
 
 @pytest.fixture
-def env():
+def env(monkeypatch):
+    monkeypatch.setattr(review, "today", lambda: TODAY)
     store, tg = MemoryStore(), FakeTelegram()
     plan = a_plan()
     run(store.add_plan("a1b2c3d4e5f6", plan.week, plan.posts, plan.sources, plan.manifest, plan.idea_ids))
@@ -528,3 +643,129 @@ def test_plan_refuses_a_bad_week(week):
 
     with pytest.raises(SystemExit):
         cli.main(["plan", "--week", week])
+
+
+def test_a_plan_with_a_day_that_has_passed_cant_be_approved(env, monkeypatch):
+    send(env)
+    monkeypatch.setattr(review, "today", lambda: date(2026, 11, 19))
+    run(review.handle_callback(env.lv, tap("pl:ok:a1b2c3d4e5f6", 1), 1, OWNER))
+    assert toast(env.tg).startswith("Postarea de Wed 18 Nov e pentru o zi care a trecut")
+    run(review.handle_callback(env.lv, tap("pl:d:a1b2c3d4e5f6:1", 2), 2, OWNER))
+    run(review.handle_callback(env.lv, tap("pl:d:a1b2c3d4e5f6:2", 3), 3, OWNER))     # keeps the mix within 60%
+    run(review.handle_callback(env.lv, tap("pl:ok:a1b2c3d4e5f6", 4), 4, OWNER))
+    assert run(env.store.get_plan("a1b2c3d4e5f6"))["status"] == "approved"
+
+
+def test_an_approve_that_raced_a_drop_decides_nothing(env, monkeypatch):
+    send(env)
+    real = env.store.get_plan
+
+    async def stale(plan_id):                 # the plan as read just before a ❌ landed
+        row = await real(plan_id)
+        await env.store.set_dropped(plan_id, 3, True)
+        return row
+
+    monkeypatch.setattr(env.store, "get_plan", stale)
+    run(review.handle_callback(env.lv, tap("pl:ok:a1b2c3d4e5f6", 1), 1, OWNER))
+    monkeypatch.setattr(env.store, "get_plan", real)
+    assert toast(env.tg) == "Planul s-a schimbat chiar acum — apasă din nou"
+    assert run(env.store.get_plan("a1b2c3d4e5f6"))["status"] == "sent"
+
+
+def test_the_note_names_who_tapped(env):
+    send(env)
+    cb = dict(tap("pl:no:a1b2c3d4e5f6", 1), **{"from": {"id": 9, "first_name": "Scaler"}})
+    run(review.handle_callback(env.lv, cb, 1, OWNER))
+    assert [c[1]["text"] for c in env.tg.sent("sendMessage") if c[1]["chat_id"] == OWNER][0].startswith(
+        "🔁 Scaler vrea alt plan")
+
+
+def test_a_plan_that_failed_halfway_is_open_and_can_be_finished(env):
+    env.tg.fail["sendMessage"] = []
+    sent = 0
+    real = env.tg.call
+
+    async def flaky(method, data, **kw):
+        nonlocal sent
+        if method == "sendMessage":
+            sent += 1
+            if sent == 4:
+                raise RuntimeError("Telegram 502")
+        return await real(method, data, **kw)
+
+    env.tg.call = flaky
+    with pytest.raises(RuntimeError):
+        send(env)
+    assert run(env.store.get_plan("a1b2c3d4e5f6"))["status"] == "sent"        # the delivered posts work
+    run(review.handle_callback(env.lv, tap("pl:d:a1b2c3d4e5f6:1", 1), 1, OWNER))
+    assert run(env.store.get_plan("a1b2c3d4e5f6"))["dropped"] == [1]
+    before = len(env.tg.sent("sendMessage"))
+    send(env)                                                                   # --resend
+    again = [c[1]["text"] for c in env.tg.sent("sendMessage")[before:]]
+    assert len(again) == 4 and again[0].startswith("3. ") and again[-1].endswith("gata?")
+
+
+def test_betty_s_newest_ideas_come_first():
+    store = MemoryStore()
+    for i in range(25):
+        run(store.add_idea(1, 1, f"idea {i}"))
+    ideas = run(store.new_ideas())
+    assert len(ideas) == 20 and ideas[0]["text"] == "idea 24"
+
+
+# ── the Anthropic call loop, with a fake client ──
+
+def _response(blocks, stop="tool_use", searches=0):
+    from types import SimpleNamespace as N
+
+    return N(content=blocks, stop_reason=stop,
+             usage=N(input_tokens=10, output_tokens=5, server_tool_use=N(web_search_requests=searches)))
+
+
+def _block(**kw):
+    from types import SimpleNamespace as N
+
+    b = N(**kw)
+    b.model_dump = lambda exclude_none=True: dict(kw)
+    return b
+
+
+class FakeClient:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.requests: list[dict] = []
+        self.messages = self
+
+    async def create(self, **kw):
+        self.requests.append(copy.deepcopy(kw))
+        return self.responses.pop(0)
+
+
+def test_the_call_loop_collects_sources_across_turns_and_caps_the_searches():
+    from types import SimpleNamespace as N
+
+    from content_system.planning.llm import anthropic_call
+    from content_system.planning.research import REPORT
+
+    found = _block(type="web_search_tool_result", content=[N(url="https://a.example/1"), N(url="https://b.example/2")])
+    client = FakeClient(_response([found], stop="pause_turn", searches=3),
+                        _response([_block(type="text", text="done")], stop="end_turn", searches=1),
+                        _response([_block(type="tool_use", name="report_candidates", input={"candidates": []})]))
+    answer = run(anthropic_call("m", "k", client=client)("sys", "go", REPORT, search=True, max_searches=4))
+    assert answer.sources == {"https://a.example/1", "https://b.example/2"} and answer.usage["searches"] == 4
+    first, second, third = client.requests
+    assert first["tool_choice"] == {"type": "auto"} and first["tools"][1]["max_uses"] == 4
+    assert second["tools"][1]["max_uses"] == 1 and second["tool_choice"] == {"type": "auto"}
+    # 4 searches used: the third request may not search any more, it must answer
+    assert third["tool_choice"] == {"type": "tool", "name": "report_candidates"}
+    assert third["messages"][-1]["content"].startswith("Now call report_candidates")
+
+
+def test_a_tool_call_cut_off_at_max_tokens_is_never_used():
+    from content_system.planning.llm import anthropic_call
+    from content_system.planning.write import WRITE
+
+    client = FakeClient(_response([_block(type="tool_use", name="write_post", input={"label": "Mia"})],
+                                  stop="max_tokens"))
+    with pytest.raises(PlanningError, match="cut off"):
+        run(anthropic_call("m", "k", client=client)("sys", "go", WRITE))

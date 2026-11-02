@@ -191,32 +191,56 @@ build --week W:        the approved plan → weeks/W.toml → photos → render 
 | `railway run python -m content_system plan --week 2026-W47` | `ANTHROPIC_API_KEY` (and `CONTENT_DB_URL` for Betty's ideas) | researches and writes `output/content/2026-W47/plan-<id>.toml` — read it, nothing is sent |
 | `railway run python -m content_system plan --week 2026-W47 --send` | + `CONTENT_DB_URL`, bot token, `TELEGRAM_CHAT_ID` | a new plan, stored in `content.plans`, sent to Betty; older open plans of the week stop working |
 | `railway run python -m content_system plan --week 2026-W47 --status` | `CONTENT_DB_URL` | the week's plans and what Betty decided |
+| `railway run python -m content_system plan --week 2026-W47 --resend <id>` | as `--send` | after a failed send: sends only the messages that didn't go out (no new research) |
 | `railway run python -m content_system build --week 2026-W47 [--replace] [--no-photos]` | `CONTENT_DB_URL`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` | the approved plan without the posts she took out → `weeks/2026-W47.toml`, its photos, the render |
 
 How a plan is made (Claude Sonnet 5.5, `CONTENT_PLAN_MODEL`):
 
 1. **Research, with web search** (up to `CONTENT_PLAN_SEARCHES`, default 10, $10 per 1000): about 12
    candidates (events 2–10 weeks ahead, destinations in season, airline/lounge news, hotels; Betty's
-   new ideas first), each with its facts and the page of each fact. A fact whose page was not among
-   the pages the searches actually returned is dropped; a candidate left with fewer than two facts,
-   or an event already over, is dropped.
+   new ideas first, the newest of them first), each with its facts and the page of each fact. A fact
+   whose page was not among the pages the searches actually returned is dropped. A candidate is
+   dropped if it is left with fewer than two facts, if it is an event that is already over, or if
+   its dates are not in its own facts. An idea id the model invents is cleared.
 2. **Choice:** one candidate per publishing day (`CONTENT_PLAN_DAYS`, default Wed–Sun) with a style.
    Checked in code, asked again with the reasons (3 tries): the week mix (≤60% with a fare, never
    three in a row, a style at most twice), a content type at most twice and at least three types, a
    priced style only for a destination the pricing engine can price, an event not over on its day.
-3. **Drafts:** per post the text, the design fields of its style and the photo brief. Checked in
-   code, written again once with the reasons: the manifest fields, the caption rules (no `$`, no
-   `_ * \` [`, the length), a fare the pricing engine gives for the post's own destination, the
-   foreground device not repeated, and the fact check of the assistant — **every number, airport
-   code, month and weekday in the text must be in the research** (or be the post's own day).
+3. **Drafts:** per post, the text, the design fields of its style and the photo brief. The code
+   checks each draft; a refused or malformed draft is written again once, with the reasons:
+   - the manifest fields;
+   - the caption rules: no `$`, none of `_ * \` [`, and the length;
+   - the fare. The image prints the lowest fare over the post's airports, so every airport must
+     belong to the post. `offer` and `price_hero` price exactly the destination. `multi` prices the
+     destination and other cities named in the facts, and lists exactly those cities;
+   - the foreground device: not the same as another post's (compared by its words);
+   - the fact check of the assistant: **every number, airport code, month and weekday in what the
+     post prints must be in the research.** That covers the text, the headline fields, the route, the
+     cities and the airports. The exceptions are the post's own day and the event's dates, which
+     were checked against the facts. The candidate's title is not a source.
+
+   The event's dates in the manifest are the researched ones, never the draft's.
 4. **The whole week** goes through the manifest loader (`load_week`) before it is offered.
 
 On Telegram, Betty gets a header, one message per post (day, style, headline, text, the photo in
-words, up to three source links) and a last card. ✅ is refused when the posts left would break the
-week mix ("pune una înapoi sau cere alt plan"). On ✅ her ideas in the plan are marked `planned` and
+words, up to three source links) and a last card.
+- The plan is open for taps once the header is out. If sending stops halfway, `--resend` finishes
+  it. The week's older open plans are closed only after the new one has gone out.
+- ✅ is refused when the posts left would break the week mix ("pune una înapoi sau cere alt plan"),
+  or when a post left is for a day that has passed.
+- ✅ decides only on the posts it checked: a ❌ that lands at the same moment makes it miss ("apasă
+  din nou"). On ✅ her ideas in the plan are marked `planned` and
 Scaler's chat (`CONTENT_OWNER_CHAT_ID`) gets the `build` command; on 🔁, the `plan … --send` command.
 Taps are claimed per Telegram update (a repeated delivery does nothing) and a closed plan's buttons
 answer "Planul acesta e deja închis".
+
+**What the source check proves, and what it doesn't.** A fact's page really came up in the
+searches; it doesn't prove that the page says what the fact says, because the fact's wording is
+still the model's. The posts are held to that wording, and Betty reads every post with its links
+before approving. Nothing is published from the plan.
+
+`build` refuses a plan with posts for days that have passed. Photo names carry the plan's id, so a
+later plan never reuses an older plan's photo.
 
 Before the first `plan --send`: migration `013_plans.sql` in the SQL Editor (after 012). `plan` and
 `build` check that `content.plans` and `content.ideas` exist.
