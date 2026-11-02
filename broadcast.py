@@ -89,7 +89,8 @@ async def run_broadcast():
             campaign_id = deal.get("campaign_id", "")
             if campaign_id:
                 update_deal_status(campaign_id, "sent")
-                await update_campaign_status(campaign_id, "sent")
+                if not await update_campaign_status(campaign_id, "sent"):
+                    log.warning("campaign %s was sent, but its status could not be set to sent", campaign_id)
 
         await send_broadcast_report(total_results)
         await record_job_complete(job_id, events_count=len(approved), details=total_results)

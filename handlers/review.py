@@ -11,6 +11,7 @@ LOCKED_STATUSES = {"sent", "cancelled"}
 
 NOT_READ = "⚠️ Couldn't read the post's status: nothing changed. Try again."
 SHEET_FAILED = "⚠️ The Google Sheet did not update: nothing changed. Try again."
+DB_FAILED = "⚠️ The database did not update: the post is as it was. Try again."
 
 
 async def set_review_status(campaign_id: str, target: str) -> tuple[str, str | None]:
@@ -21,7 +22,9 @@ async def set_review_status(campaign_id: str, target: str) -> tuple[str, str | N
       "same"         it already was `target` — the Sheet is written again, in case an earlier write failed;
       "locked"       it is sent or cancelled — nothing touched;
       "unreadable"   its status can't be read — nothing touched;
-      "sheet_failed" the Sheet write failed — Supabase is left as it was, so tapping again redoes both.
+      "sheet_failed" the Sheet write failed — Supabase is left as it was, so tapping again redoes both;
+      "db_failed"    the Supabase update changed nothing (an error, or it was sent meanwhile — then
+                     "locked") — the Sheet is put back, so tapping again redoes both.
     Buttons and text intents both go through here, so neither can bypass the guard.
     """
     from services.sheets_client import update_deal_status
@@ -37,8 +40,18 @@ async def set_review_status(campaign_id: str, target: str) -> tuple[str, str | N
         return "sheet_failed", current
     if current == target:
         return "same", current
-    await update_campaign_status(campaign_id, target)
-    return "done", current
+    if await update_campaign_status(campaign_id, target):
+        return "done", current
+    # nothing changed in Supabase: put the Sheet back so the two stores agree, then say why
+    try:
+        now = await get_campaign_status(campaign_id)
+    except StatusUnavailable:
+        now = current
+    if not update_deal_status(campaign_id, now or current or "draft"):
+        log.error("Sheet left at %s for %s while Supabase says %s", target, campaign_id, now)
+    if now in LOCKED_STATUSES:
+        return "locked", now
+    return "db_failed", current
 
 
 def review_reply(outcome: str, current: str | None, done: str) -> str:
@@ -47,7 +60,7 @@ def review_reply(outcome: str, current: str | None, done: str) -> str:
         return done
     if outcome in ("same", "locked"):
         return f"Already {current}: nothing changed"
-    return NOT_READ if outcome == "unreadable" else SHEET_FAILED
+    return {"unreadable": NOT_READ, "db_failed": DB_FAILED}.get(outcome, SHEET_FAILED)
 
 
 async def handle_approve(
