@@ -25,6 +25,8 @@ htmlcov/
 downloads/
 *.sqlite
 output/
+.candidates/          # every photo candidate `content_system photos` tried (assets/curated/week_*/.candidates)
+.*.part
 graphify-out/
 
 # OS

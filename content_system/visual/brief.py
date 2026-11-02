@@ -17,6 +17,7 @@ template). The design puts the logo and the headline in the upper half: it must 
 """
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -72,16 +73,52 @@ def device_key(device: str) -> str:
     return " ".join(device.lower().replace(",", " ").split())
 
 
+# Words that don't make a foreground element different: "the teak lounger" is "a teak lounger",
+# "two empty armchairs" is "an empty armchair".
+_FILLER = frozenset([
+    "a", "an", "the", "this", "that", "these", "those", "some", "any", "each", "every",
+    "its", "their", "his", "her", "our", "your",
+    "of", "with", "on", "in", "at", "by", "from", "to", "for", "into", "onto", "near", "beside", "next",
+    "under", "over", "above", "below", "behind", "and", "or",
+    "one", "two", "three", "four", "five", "six", "pair", "couple", "set", "few", "several", "many", "single",
+])
+
+
+def _singular(word: str) -> str:
+    if len(word) > 4 and word.endswith(("sses", "shes", "ches", "xes")):
+        return word[:-2]
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return word[:-1]
+    return word
+
+
+def device_words(device: str) -> frozenset[str]:
+    """The words that name the element: no punctuation, no articles or counts, singular."""
+    words = re.findall(r"[a-z0-9]+", device.lower())          # "sun-lounger." → sun, lounger
+    return frozenset(_singular(w) for w in words if w not in _FILLER)
+
+
+def same_device(a: str, b: str) -> bool:
+    """Close enough to read as the same foreground element: the same words, one inside the other
+    ("an empty armchair" in "an empty leather armchair"), or mostly the same words."""
+    x, y = device_words(a), device_words(b)
+    if not x or not y:
+        return device_key(a) == device_key(b)
+    return x <= y or y <= x or len(x & y) / len(x | y) >= 0.6
+
+
 def week_problems(briefs: list[tuple[str, ImageBrief | None]]) -> list[str]:
     """The foreground device must change from post to post within a week."""
-    seen: dict[str, str] = {}
+    seen: list[tuple[str, str]] = []
     out = []
     for label, b in briefs:
         if b is None:
             continue
-        key = device_key(b.device)
-        if key in seen:
-            out.append(f"{label}: the foreground device {b.device!r} repeats {seen[key]} — use a different one")
+        twin = next((other for other, device in seen if same_device(b.device, device)), None)
+        if twin is not None:
+            out.append(f"{label}: the foreground device {b.device!r} repeats {twin} — use a different one")
         else:
-            seen[key] = label
+            seen.append((label, b.device))
     return out

@@ -15,13 +15,14 @@ from PIL import Image
 
 from content_system.graph import plan_sha
 from content_system.manifest import ManifestError, load_week, photo_report
-from content_system.visual.brief import ImageBrief, prompt, week_problems
-from content_system.visual.models import VERDICT_TOOL, judge_prompt
-from content_system.visual.photos import make_photo, verdict_problems
+from content_system.visual.brief import ImageBrief, prompt, same_device, week_problems
+from content_system.visual.models import VERDICT_TOOL, ModelSetupError, judge_prompt
+from content_system.visual.photos import MALFORMED, make_photo, verdict_problems
 from content_system.visual.qc import fit, inspect
 from tests.content_fakes import ROOT, W42
 
-CURATED = sorted((ROOT / "assets" / "curated").rglob("*.jpg"))
+CURATED = sorted(f for f in (ROOT / "assets" / "curated").rglob("*.jpg") if ".candidates" not in f.parts)
+PORTRAIT = [f for f in CURATED if Image.open(f).height > Image.open(f).width]
 BRIEF = ImageBrief(scene="Table Mountain at golden hour over Clifton, the Atlantic below",
                    vantage="a villa terrace above Clifton beach",
                    device="the edge of a teak sun lounger with a folded towel", time="golden hour")
@@ -79,6 +80,35 @@ def test_the_foreground_device_must_change_within_a_week(tmp_path):
     assert any("repeats post 1" in p for p in e.value.problems)
 
 
+@pytest.mark.parametrize(("a", "b"), [
+    ("a teak sun lounger", "a teak sun lounger."), ("a teak sun lounger", "the teak sun lounger"),
+    ("teak sun lounger", "teak sun-lounger"), ("an empty armchair", "two empty armchairs"),
+    ("an empty leather armchair", "an empty armchair"), ("a glass of champagne", "two glasses of champagne"),
+    ("the edge of a teak sun lounger with a folded towel", "a teak sun lounger"),
+])
+def test_a_device_written_another_way_is_the_same_device(a, b):
+    assert same_device(a, b) and same_device(b, a)
+
+
+@pytest.mark.parametrize(("a", "b"), [
+    ("a teak sun lounger", "a terrace balustrade"), ("a car door window", "a train window"),
+    ("a linen napkin on a balcony table", "a marble table"),
+    ("a cashmere blanket on a deck chair", "a wooden deck rail"),
+])
+def test_different_devices_stay_different(a, b):
+    assert not same_device(a, b)
+
+
+def test_two_posts_with_briefs_cant_share_a_photo_name(tmp_path):
+    path = _manifest_with_briefs(tmp_path, ["a teak sun lounger", "a terrace balustrade", "the rail of a private box",
+                                            "a car door window", "a linen napkin on a balcony table"])
+    text = path.read_text(encoding="utf-8").replace('photo = "beaune"', 'photo = "cape_town"')
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ManifestError) as e:
+        load_week(path)
+    assert sum("another post uses the same photo name" in p for p in e.value.problems) == 2
+
+
 def test_a_week_with_briefs_loads_and_says_how_to_make_the_photos(tmp_path):
     week = load_week(_manifest_with_briefs(tmp_path, ["a teak sun lounger", "a terrace balustrade",
                                                       "the rail of a private box", "a car door window",
@@ -89,26 +119,33 @@ def test_a_week_with_briefs_loads_and_says_how_to_make_the_photos(tmp_path):
 
 
 def test_posts_without_a_brief_keep_their_fingerprint():
-    """PR-1 threads compare plan_sha: adding the optional field must not make every post 'changed'."""
-    import hashlib
-
-    week = load_week(W42)
-    p = week.posts[0]
-    assert p.spec.image is None
-    spec = p.spec.model_dump(mode="json")
-    spec.pop("image")
-    photo = Path(p.design.background)
-    plan = {"spec": spec, "caption": p.caption, "design": p.design.model_dump(mode="json", exclude={"background"}),
-            "photo": hashlib.sha256(photo.read_bytes()).hexdigest() if photo.exists() else None}
-    assert plan_sha(p) == hashlib.sha256(json.dumps(plan, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    """PR-1 threads compare plan_sha: adding the optional field must not make every post 'changed'.
+    These are W42's fingerprints as PR-1 (71a1024) computes them."""
+    assert [plan_sha(p) for p in load_week(W42).posts] == [
+        "97edf8a2dace76128b7001da158ba3abf7540c012060a70e3084c3967fa02d8d",
+        "fb3ab16e8903373ac70a1b37f83edd8dcb95fb5bc0905c15dc78b62ca4fbadcd",
+        "6b27b9ea92acfa4a487e48f60de0f7833efc2850771242311ce8b26b6873fb00",
+        "663fb93f531c09e2306cf26f27fea1a5eaf5f86204cab4d0bda6fc893526abcb",
+        "f450f5d06bae2abc0691f023337f5f8a1f766d91a9f5021a45f1328fa479c1ab",
+    ]
 
 
 # ── checks without AI ────────────────────────────────────────────────────────
 
 def test_every_approved_photo_passes_the_checks():
-    assert CURATED, "assets/curated has the approved photos"
-    refused = {f.name: inspect(*fit(f.read_bytes())).problems for f in CURATED}
+    assert PORTRAIT, "assets/curated has the approved photos"
+    refused = {f.name: inspect(*fit(f.read_bytes())).problems for f in PORTRAIT}
     assert {k: v for k, v in refused.items() if v} == {}
+
+
+def test_a_landscape_image_is_judged_by_its_9_16_slice():
+    """A 1280×714 photo keeps a 401 px wide slice once cropped to 9:16: too small, however wide it is."""
+    for f in (f for f in CURATED if f not in PORTRAIT):
+        c = inspect(*fit(f.read_bytes()))
+        assert c.problems == ["too small: the 9:16 crop of 1280×714 is 401 px wide (needs at least 540)"]
+        assert c.notes["aspect"].startswith("not 9:16 (1280×714)")
+    wide = inspect(*fit(_jpeg(Image.linear_gradient("L").resize((2752, 1536)).convert("RGB"))))
+    assert wide.ok and "upscaled from 864 px wide" in wide.notes["size"] and "aspect" in wide.notes
 
 
 @pytest.mark.parametrize(("image", "problem"), [
@@ -143,6 +180,7 @@ def test_fit_makes_1080x1920():
     ({"text_or_logo": True}, "text or a logo"),
     ({"matches_brief": False}, "doesn't show the brief"),
     ({"artifacts": True}, "generation errors"),
+    ({"calm_top": False}, "no calm space for the logo and the headline"),
     ({"score": 6}, "scored 6/10"),
 ])
 def test_each_rule_refuses_on_its_own(change, problem):
@@ -156,7 +194,14 @@ def test_few_people_on_the_left_pass_when_the_brief_allows_them():
 
 
 def test_a_verdict_missing_answers_fails_closed():
-    assert len(verdict_problems({}, BRIEF)) >= 6
+    assert verdict_problems({}, BRIEF) == [MALFORMED]
+
+
+@pytest.mark.parametrize("change", [{"one_photograph": "false"}, {"matches_brief": "true"}, {"crowd": 0},
+                                    {"score": "8/10"}, {"score": "8"}, {"score": 11}, {"problems": 5},
+                                    {"people": "two on the right"}])
+def test_a_verdict_of_the_wrong_type_fails_closed(change):
+    assert verdict_problems(GOOD | change, BRIEF) == [MALFORMED]
 
 
 def test_the_judge_is_asked_every_rule():
@@ -202,8 +247,12 @@ def test_the_best_passing_candidate_becomes_the_photo(post):
     assert Image.open(r.photo).size == (1080, 1920)
     assert Path(r.photo).read_bytes() == Path(r.candidates[2].path).read_bytes()        # the 9, not the 8
     assert "rejected because: not one single photograph" in m.prompts[1]                # told why
-    report = json.loads((folder / ".candidates" / f"{p.spec.photo}.qc.json").read_text())
+    run_dir = Path(r.folder)
+    assert run_dir.parent == folder / ".candidates" / p.spec.photo
+    assert sorted(f.name for f in run_dir.iterdir()) == ["1.jpg", "2.jpg", "3.jpg", "qc.json"]
+    report = json.loads((run_dir / "qc.json").read_text())
     assert report["chosen"] == 3 and len(report["candidates"]) == 3
+    assert not list(folder.glob(".*.part"))
 
 
 def test_no_passing_candidate_writes_no_photo(post):
@@ -219,6 +268,28 @@ def test_a_failed_generation_is_reported_and_the_next_one_tried(post):
     m = FakeModels([GOOD, GOOD], fail_first=True)
     r = run(make_photo(p, folder, m.generate, m.judge))
     assert r.status == "made" and r.candidates[0].problems == ["generation failed: RuntimeError: model overloaded"]
+    assert "rejected because" not in m.prompts[1]          # an API error says nothing about the picture
+
+
+def test_a_malformed_verdict_fails_the_candidate_not_the_run(post):
+    p, folder = post
+    m = FakeModels([GOOD | {"score": "8/10"}, GOOD | {"problems": 5}, GOOD])
+    r = run(make_photo(p, folder, m.generate, m.judge))
+    assert r.status == "made" and [c.problems for c in r.candidates[:2]] == [[MALFORMED], [MALFORMED]]
+    assert "rejected because" not in m.prompts[1] + m.prompts[2]
+
+
+def test_a_wrong_key_or_model_stops_at_once(post):
+    p, folder = post
+
+    class Broken(FakeModels):
+        async def judge(self, jpeg, brief):
+            raise ModelSetupError("Claude claude-sonnet-5-5: AuthenticationError: invalid x-api-key")
+
+    m = Broken([])
+    with pytest.raises(ModelSetupError):
+        run(make_photo(p, folder, m.generate, m.judge))
+    assert len(m.prompts) == 1 and not (folder / f"{p.spec.photo}.jpg").exists()
 
 
 def test_an_existing_photo_is_kept_unless_again(post):
@@ -227,10 +298,17 @@ def test_an_existing_photo_is_kept_unless_again(post):
     old.write_bytes(_jpeg(Image.open(CURATED[0]).convert("RGB")))
     m = FakeModels([GOOD])
     assert run(make_photo(p, folder, m.generate, m.judge)).status == "kept" and m.prompts == []
-    before = old.read_bytes()
-    r = run(make_photo(p, folder, m.generate, m.judge, candidates=1, again=True))
-    assert r.status == "made" and old.read_bytes() != before
-    assert (folder / ".candidates" / f"{p.spec.photo}.previous.jpg").read_bytes() == before     # not lost
+    original = old.read_bytes()
+    first = run(make_photo(p, folder, m.generate, m.judge, candidates=1, again=True))
+    assert first.status == "made" and old.read_bytes() != original
+    made_first = old.read_bytes()
+    m.verdicts = [GOOD]
+    second = run(make_photo(p, folder, m.generate, m.judge, candidates=1, again=True))
+    assert second.status == "made" and second.folder != first.folder
+    # nothing is lost: the original is in the first run's folder, the first run's photo in the second's
+    assert (Path(first.folder) / "previous.jpg").read_bytes() == original
+    assert (Path(second.folder) / "previous.jpg").read_bytes() == made_first
+    assert (Path(first.folder) / "1.jpg").exists() and (Path(first.folder) / "qc.json").exists()
 
 
 def test_a_post_without_a_brief_is_left_to_a_person(tmp_path):
@@ -265,7 +343,48 @@ def test_the_photos_command_with_fake_models(tmp_path, monkeypatch, capsys):
     main(["photos", str(path), "--post", "1", "3", "--candidates", "2"])
     out = capsys.readouterr().out
     assert out.count("✓ ") == 2 and "score 9/10" in out and len(m.prompts) == 4
+    assert "all in .candidates/cape_town/" in out
     assert sorted(f.name for f in (tmp_path / "photos").glob("*.jpg")) == ["cape_town.jpg", "singapore_airlines.jpg"]
+
+
+@pytest.mark.parametrize(("args", "message"), [(["--post", "9"], "--post 9: the week has posts 1 to 5"),
+                                               (["--candidates", "-1"], "--candidates -1: between 1 and 8")])
+def test_the_photos_command_refuses_wrong_numbers(tmp_path, monkeypatch, capsys, args, message):
+    import content_system.visual.models as models
+    from config import settings
+    from content_system.__main__ import main
+
+    path = _manifest_with_briefs(tmp_path, ["a teak sun lounger", "a terrace balustrade", "the rail of a private box",
+                                            "a car door window", "a linen napkin on a balcony table"])
+    m = FakeModels([])
+    monkeypatch.setattr(settings, "gemini_api_key", "g")
+    monkeypatch.setattr(settings, "anthropic_api_key", "a")
+    monkeypatch.setattr(models, "gemini_generator", lambda *a, **k: m.generate)
+    monkeypatch.setattr(models, "claude_judge", lambda *a, **k: m.judge)
+    with pytest.raises(SystemExit):
+        main(["photos", str(path), *args])
+    assert message in capsys.readouterr().err and m.prompts == []
+
+
+def test_the_photos_command_stops_on_a_wrong_key(tmp_path, monkeypatch, capsys):
+    import content_system.visual.models as models
+    from config import settings
+    from content_system.__main__ import main
+
+    path = _manifest_with_briefs(tmp_path, ["a teak sun lounger", "a terrace balustrade", "the rail of a private box",
+                                            "a car door window", "a linen napkin on a balcony table"])
+    m = FakeModels([])
+
+    async def judge(jpeg, brief):
+        raise ModelSetupError("Claude claude-sonnet-5-5: AuthenticationError: invalid x-api-key")
+
+    monkeypatch.setattr(settings, "gemini_api_key", "g")
+    monkeypatch.setattr(settings, "anthropic_api_key", "a")
+    monkeypatch.setattr(models, "gemini_generator", lambda *a, **k: m.generate)
+    monkeypatch.setattr(models, "claude_judge", lambda *a, **k: judge)
+    with pytest.raises(SystemExit):
+        main(["photos", str(path)])
+    assert "invalid x-api-key" in capsys.readouterr().err and len(m.prompts) == 1
 
 
 # ── the real clients, with their network call replaced ───────────────────────
@@ -286,6 +405,9 @@ def test_gemini_generator_asks_for_9_16_and_reads_the_image(monkeypatch):
     client = next(c.cell_contents for c in generate.__closure__ if c.cell_contents.__class__.__name__ == "Client")
     monkeypatch.setattr(client.aio.models, "generate_content", fake_generate_content)
     assert run(generate("a photo")) == b"\xff\xd8jpeg"
+    options = client._api_client._http_options
+    assert options.timeout == models.TIMEOUT_S * 1000 and options.retry_options.attempts == 3
+    assert 429 in options.retry_options.http_status_codes and 503 in options.retry_options.http_status_codes
     assert seen["model"] == "gemini-3.1-flash-image" and seen["contents"] == "a photo"
     assert seen["config"].image_config.aspect_ratio == "9:16" and seen["config"].image_config.image_size == "2K"
     assert seen["config"].response_modalities == ["IMAGE"]
@@ -303,7 +425,44 @@ def test_gemini_generator_without_an_image_raises(monkeypatch):
     generate = models.gemini_generator("gemini-3.1-flash-image", "test-key")
     client = next(c.cell_contents for c in generate.__closure__ if c.cell_contents.__class__.__name__ == "Client")
     monkeypatch.setattr(client.aio.models, "generate_content", empty)
-    with pytest.raises(models.ImageModelError, match="returned no image"):
+    with pytest.raises(models.ImageModelError, match=r"returned no image \(.*SAFETY"):
+        run(generate("a photo"))
+
+
+def test_gemini_generator_skips_thought_images_and_says_why_it_had_none(monkeypatch):
+    from google.genai import types
+
+    from content_system.visual import models
+
+    draft = types.Part(thought=True, inline_data=types.Blob(data=b"DRAFT", mime_type="image/jpeg"))
+    final = types.Part(inline_data=types.Blob(data=b"FINAL", mime_type="image/jpeg"))
+    answers = [types.GenerateContentResponse(candidates=[types.Candidate(content=types.Content(parts=[draft, final]))]),
+               types.GenerateContentResponse(prompt_feedback=types.GenerateContentResponsePromptFeedback(
+                   block_reason="PROHIBITED_CONTENT"))]
+
+    async def fake(**kwargs):
+        return answers.pop(0)
+
+    generate = models.gemini_generator("gemini-3.1-flash-image", "test-key")
+    client = next(c.cell_contents for c in generate.__closure__ if c.cell_contents.__class__.__name__ == "Client")
+    monkeypatch.setattr(client.aio.models, "generate_content", fake)
+    assert run(generate("a photo")) == b"FINAL"
+    with pytest.raises(models.ImageModelError, match="prompt blocked: .*PROHIBITED_CONTENT"):
+        run(generate("a photo"))
+
+
+def test_gemini_setup_errors_stop_the_run(monkeypatch):
+    from google.genai import errors
+
+    from content_system.visual import models
+
+    async def denied(**kwargs):
+        raise errors.ClientError(403, {"error": {"code": 403, "status": "PERMISSION_DENIED", "message": "API key"}})
+
+    generate = models.gemini_generator("gemini-3.1-flash-image", "test-key")
+    client = next(c.cell_contents for c in generate.__closure__ if c.cell_contents.__class__.__name__ == "Client")
+    monkeypatch.setattr(client.aio.models, "generate_content", denied)
+    with pytest.raises(models.ModelSetupError, match="403 PERMISSION_DENIED"):
         run(generate("a photo"))
 
 
