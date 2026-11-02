@@ -137,7 +137,7 @@ async def cmd_render(args: argparse.Namespace) -> None:
 async def cmd_photos(args: argparse.Namespace) -> None:
     from config import settings as app
     from content_system.settings import get_settings
-    from content_system.visual.models import claude_judge, gemini_generator
+    from content_system.visual.models import ModelSetupError, claude_judge, gemini_generator
     from content_system.visual.photos import make_photo
 
     week = _load(args.manifest)
@@ -146,6 +146,12 @@ async def cmd_photos(args: argparse.Namespace) -> None:
                if not v]
     if missing:
         stop(", ".join(missing) + " not set — run it with: railway run python -m content_system photos …")
+    wrong = [n for n in args.post or [] if not 1 <= n <= len(week.posts)]
+    if wrong:
+        stop(f"--post {' '.join(map(str, wrong))}: the week has posts 1 to {len(week.posts)}")
+    n_candidates = args.candidates or cs.image_candidates
+    if not 1 <= n_candidates <= 8:
+        stop(f"--candidates {n_candidates}: between 1 and 8")
     posts = [p for p in week.posts if not args.post or p.index in args.post]
     if not any(p.spec.image for p in posts):
         stop("no post has an [post.image] brief — add one under the post in the manifest")
@@ -156,8 +162,11 @@ async def cmd_photos(args: argparse.Namespace) -> None:
     print(f"{week.name} · photos → {week.manifest.photos}/  ({cs.image_model}, checked by {cs.vision_model})")
     failed = 0
     for p in posts:
-        r = await make_photo(p, folder, generate, judge, candidates=args.candidates or cs.image_candidates,
-                             again=args.again)
+        try:
+            r = await make_photo(p, folder, generate, judge, candidates=n_candidates, again=args.again)
+        except ModelSetupError as e:
+            stop(f"{e} — check the key and the model name (CONTENT_IMAGE_MODEL, CONTENT_VISION_MODEL); "
+                 "nothing more was generated")
         if r.status == "kept":
             print(f"  = {p.day_label}  {p.spec.photo}: already there, kept (--again to make a new one)")
         elif r.status == "no_brief":
@@ -166,14 +175,15 @@ async def cmd_photos(args: argparse.Namespace) -> None:
             best = max((c for c in r.candidates if c.ok), key=lambda c: c.score)
             others = sum(c.ok for c in r.candidates) - 1
             print(f"  ✓ {p.day_label}  {Path(r.photo).name}  score {best.score}/10  "
-                  f"(candidate {best.index} of {len(r.candidates)}; {others} other(s) passed, in .candidates/)")
+                  f"(candidate {best.index} of {len(r.candidates)}; {others} other(s) passed; all in "
+                  f"{Path(r.folder).relative_to(folder).as_posix()}/)")
             for k, v in best.notes.items():
-                if k in ("size", "top"):
+                if k in ("size", "top", "aspect"):
                     print(f"      ! {v}")
         else:
             failed += 1
             print(f"  ✗ {p.day_label}  {p.spec.photo}: no candidate passed — " + "; ".join(r.problems), file=sys.stderr)
-    print("\nLook at them (and at .candidates/), then: python -m content_system render " + args.manifest)
+    print("\nLook at them (and at .candidates/<photo>/<time>/), then: python -m content_system render " + args.manifest)
     if failed:
         stop(f"{failed} photo(s) not made — change the brief, or run again (each run tries new candidates)")
 

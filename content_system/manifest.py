@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import tomllib
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -232,6 +233,10 @@ def load_week(path: str | Path) -> Week:
             stem=f"{spec.day.strftime('%a').lower()}_{spec.photo}",
         ))
 
+    names = Counter(spec.photo for spec in manifest.posts)
+    problems.extend(f"post {i} ({spec.photo}): another post uses the same photo name — a post with a "
+                    "[post.image] brief needs its own" for i, spec in enumerate(manifest.posts, 1)
+                    if spec.image is not None and names[spec.photo] > 1)
     if len(planned) == len(manifest.posts):
         problems.extend("week mix: " + p for p in validate_week_mix([p.design.style for p in planned]))
         problems.extend("photos: " + p for p in week_problems([(f"post {p.index} ({p.spec.photo})", p.spec.image)

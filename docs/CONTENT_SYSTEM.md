@@ -45,15 +45,34 @@ people  = "none"                                                             # o
 `railway run python -m content_system photos weeks/2026-W43.toml [--post 2 4] [--again] [--candidates 3]`
 
 - Per post with a brief and no photo yet: 3 candidates from `gemini-3.1-flash-image` (9:16, 2K), each
-  cropped to 1080×1920, checked without AI (too small, blank, far too dark or bright), then looked at
-  by `claude-sonnet-5-5` against the rules: one single photograph (no collage, nothing pasted), no
-  crowd, people only if the brief allows them and then small, on the left, out of focus, no text or
-  logos, the brief's scene / vantage / foreground, no generation errors, score ≥ 7/10. Whether it
-  passes is decided in the code from those answers, not by the model.
-- The best passing candidate becomes `<photos>/<photo>.jpg`; all candidates and a report
-  (`<photo>.qc.json`) stay in `<photos>/.candidates/`. A later candidate is told why the earlier failed.
-- A photo already there is kept; `--again` replaces it and moves the old one to `.candidates/`.
-- `check` refuses a week whose foreground device repeats ("empty armchairs on every post").
+  cropped to 1080×1920 and checked without AI. A candidate is refused if its 9:16 crop is under 540 px
+  wide, if it is blank, or if it is far too dark or bright. A soft image or a source that isn't 9:16
+  is only noted.
+- Then `claude-sonnet-5-5` looks at it against the rules:
+  - one single photograph (no collage, nothing pasted);
+  - no crowd;
+  - people only if the brief allows them, and then small, on the left, out of focus;
+  - no text or logos;
+  - the brief's scene, vantage and foreground;
+  - a calm upper part for the logo and headline;
+  - no generation errors;
+  - a score of 7/10 or more.
+
+  Whether it passes is decided in the code from those answers, read strictly: a missing answer, or
+  one of the wrong type, fails.
+- Every run keeps what it tried in its own folder, `<photos>/.candidates/<photo>/<UTC time>/`
+  (`1.jpg`, `2.jpg` … and `qc.json`, the report); nothing from an earlier run is overwritten.
+  `.candidates/` is ignored by git. The best passing candidate becomes `<photos>/<photo>.jpg`,
+  written beside it and renamed into place.
+- A later candidate is told why the earlier one failed: what was wrong with the picture, not API errors.
+- A photo already there is kept. `--again` makes a new one and moves the old one into that run's
+  folder as `previous.jpg`, so `--again` twice still keeps the original.
+- Calls are bounded: a Gemini request times out after 180 s and is retried on 429/5xx (3 attempts).
+  A wrong key or model name (401/403/404/400) stops the run at once instead of paying for every
+  candidate.
+- `check` refuses a week whose foreground device repeats, compared by its words ("two empty armchairs"
+  repeats "an empty armchair"; "the teak sun-lounger" repeats "a teak sun lounger"). It also refuses
+  two posts with a brief that share a photo name.
 - Settings: `CONTENT_IMAGE_MODEL`, `CONTENT_IMAGE_SIZE` (1K/2K/4K), `CONTENT_VISION_MODEL`,
   `CONTENT_IMAGE_CANDIDATES`; keys `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`.
 - Then, as always: look at the photos, `render`, look at `_preview.jpg`, `send`.

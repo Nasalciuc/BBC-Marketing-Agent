@@ -1,8 +1,9 @@
 """
 Checks on a candidate photo that need no AI, before the vision check:
 
-  size     the model's image is cropped to 9:16 and scaled to 1080 x 1920; under 540 px wide it's refused,
-           under 1080 it is noted (it will look soft)
+  size     the model's image is cropped to 9:16 and scaled to 1080 x 1920. What counts is the width of
+           that crop (a landscape image keeps only a slice): under 540 px it's refused, under 1080 it is
+           noted (it will look soft). A source that isn't 9:16 is noted.
   blank    an almost uniform image (a failed generation)
   exposure far too dark or far too bright overall
   notes    the strongest straight line across the frame, and how much detail sits in the upper 45%
@@ -22,6 +23,7 @@ from PIL import Image, ImageOps
 
 TARGET = (1080, 1920)
 MIN_WIDTH = 540          # the smallest approved photo is 572 px wide; under 1080 is only noted
+ASPECT_TOLERANCE = 0.10  # a source more than 10% off 9:16 is noted
 TOP_BUSY = 9.0           # mean gradient in the upper 45% above which the headline area is "busy"
 
 
@@ -62,13 +64,23 @@ def seam_score(g: np.ndarray) -> tuple[float, float, str]:
     return best
 
 
+def crop_width(size: tuple[int, int]) -> int:
+    """The width of the 9:16 crop `fit` takes from an image of this size."""
+    w, h = size
+    return int(min(w, h * TARGET[0] / TARGET[1]))
+
+
 def inspect(img: Image.Image, source_size: tuple[int, int]) -> Check:
     problems: list[str] = []
-    notes: dict[str, float | str] = {"source": f"{source_size[0]}×{source_size[1]}"}
-    if source_size[0] < MIN_WIDTH:
-        problems.append(f"too small: {source_size[0]}×{source_size[1]} (needs at least {MIN_WIDTH} px wide)")
-    elif source_size[0] < TARGET[0]:
-        notes["size"] = f"upscaled from {source_size[0]} px wide: it may look soft"
+    w, h = source_size
+    notes: dict[str, float | str] = {"source": f"{w}×{h}"}
+    if abs((w / h) / (TARGET[0] / TARGET[1]) - 1) > ASPECT_TOLERANCE:
+        notes["aspect"] = f"not 9:16 ({w}×{h}): only a {crop_width(source_size)} px wide slice is kept"
+    width = crop_width(source_size)
+    if width < MIN_WIDTH:
+        problems.append(f"too small: the 9:16 crop of {w}×{h} is {width} px wide (needs at least {MIN_WIDTH})")
+    elif width < TARGET[0]:
+        notes["size"] = f"upscaled from {width} px wide: it may look soft"
     g = _grey(img)
     spread, mean = float(g.std()), float(g.mean())
     notes |= {"spread": round(spread, 1), "brightness": round(mean, 1)}
