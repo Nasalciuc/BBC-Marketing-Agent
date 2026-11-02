@@ -298,6 +298,27 @@ def test_the_database_itself_refuses_to_touch_a_closed_campaign(pg, tmp_path):
         == [("the real one", "sent")]
 
 
+@pytest.mark.parametrize("final", ["sent", "cancelled"])
+def test_no_writer_can_reopen_a_sent_or_cancelled_campaign(pg, final):
+    """migrations/010 trigger. Found in review: save_campaign upserts, and discover.py reuses ids within a
+    week, so saving a week again would have turned a sent campaign back into a draft — sendable again."""
+    with psycopg.connect(pg["admin"], autocommit=True) as conn:       # postgres: what the SQL editor and service_role do
+        conn.execute("insert into public.campaigns (campaign_id, event_name, status, caption) values "
+                     "('2026-W45-001', 'Monaco', %s, 'the real one'), ('2026-W45-002', 'Paris', 'draft', 'd')",
+                     (final,))
+        with pytest.raises(psycopg.errors.CheckViolation, match=f"is {final} and stays {final}"):
+            conn.execute("insert into public.campaigns (campaign_id, event_name, status, caption) "
+                         "values ('2026-W45-001', 'Monaco', 'draft', 'rediscovered') "
+                         "on conflict (campaign_id) do update set status = excluded.status, caption = excluded.caption")
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute("update public.campaigns set status = 'approved' where campaign_id = '2026-W45-001'")
+        conn.execute("update public.campaigns set status = %s where campaign_id = '2026-W45-001'", (final,))  # no change
+        conn.execute("update public.campaigns set status = 'approved' where campaign_id = '2026-W45-002'")
+    assert admin_rows(pg, "select campaign_id, status, caption from public.campaigns "
+                          "where campaign_id in ('2026-W45-001', '2026-W45-002') order by 1") \
+        == [("2026-W45-001", final, "the real one"), ("2026-W45-002", "approved", "d")]
+
+
 def test_a_failed_approve_then_a_reject_on_postgres(pg, tmp_path):
     """The branch from the old pause (update_state) works on the Postgres checkpointer too."""
     week = week42()
