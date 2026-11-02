@@ -82,6 +82,10 @@ class MemoryStore:
     async def release(self, key: str) -> None:
         self.effects.pop(key, None)
 
+    async def effect_status(self, key: str) -> str | None:
+        e = self.effects.get(key)
+        return e["status"] if e else None
+
     @asynccontextmanager
     async def lease(self, thread_id: str, wait: float = 15.0) -> AsyncIterator[None]:
         holder, deadline = uuid.uuid4().hex, time.monotonic() + wait
@@ -121,6 +125,12 @@ class MemoryStore:
     async def campaign_status(self, campaign_id: str) -> str | None:
         cur = self.campaigns.get(campaign_id)
         return cur["status"] if cur else None
+
+    async def campaign_for_publish(self, campaign_id: str) -> dict[str, Any] | None:
+        cur = self.campaigns.get(campaign_id)
+        if not cur:
+            return None
+        return {k: cur.get(k) for k in ("campaign_id", "status", "caption", "image_url", "scheduled_day")}
 
     async def add_message(self, chat_id: int, message_id: int, campaign_id: str, version: int, kind: str) -> None:
         self.messages.setdefault((int(chat_id), int(message_id)),
@@ -196,6 +206,10 @@ class PgStore:
     async def release(self, key: str) -> None:
         await self._one("delete from effects where key = %s", (key,))
 
+    async def effect_status(self, key: str) -> str | None:
+        row = await self._one("select status from effects where key = %s", (key,))
+        return row["status"] if row else None
+
     # ── lease ──
     @asynccontextmanager
     async def lease(self, thread_id: str, wait: float = 15.0) -> AsyncIterator[None]:
@@ -251,6 +265,12 @@ class PgStore:
     async def campaign_status(self, campaign_id: str) -> str | None:
         row = await self._one("select status from public.campaigns where campaign_id = %s", (campaign_id,))
         return row["status"] if row else None
+
+    async def campaign_for_publish(self, campaign_id: str) -> dict[str, Any] | None:
+        """The approved text and the reviewed image: what Betty saw is what gets posted."""
+        return await self._one(
+            "select campaign_id, status, caption, image_url, scheduled_day from public.campaigns "
+            "where campaign_id = %s", (campaign_id,))
 
     # ── messages ──
     async def add_message(self, chat_id: int, message_id: int, campaign_id: str, version: int, kind: str) -> None:

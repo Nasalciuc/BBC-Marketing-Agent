@@ -1,0 +1,72 @@
+{
+  "_note": "Candidates are tried in order; the first one present on the page is used. WhatsApp Web changes its markup: check them with `python -m publishing calibrate --target ...` and add the new selector at the top of the list. {name} is replaced by the chat name, quoted for CSS. The caption box must never be the chat's own message box (#main footer): the code checks it.",
+  "app_ready": [
+    "#pane-side",
+    "[aria-label=\"Chat list\"]",
+    "div[role=\"grid\"][aria-label]"
+  ],
+  "qr": [
+    "canvas[aria-label*=\"QR\" i]",
+    "[data-testid=\"qrcode\"]",
+    "div[data-ref] canvas"
+  ],
+  "search_box": [
+    "[aria-label=\"Search input textbox\"]",
+    "div[contenteditable=\"true\"][data-tab=\"3\"]",
+    "input[aria-label*=\"Search\" i]"
+  ],
+  "chat_in_list": [
+    "#pane-side span[title=\"{name}\"]",
+    "[aria-label=\"Chat list\"] span[title=\"{name}\"]"
+  ],
+  "header_title": [
+    "#main header span[title]",
+    "#main header span[dir=\"auto\"]"
+  ],
+  "composer": [
+    "#main footer div[contenteditable=\"true\"]",
+    "#main [aria-label=\"Type a message\"]"
+  ],
+  "attach_button": [
+    "#main [aria-label=\"Attach\"]",
+    "#main button[title=\"Attach\"]",
+    "#main span[data-icon=\"plus-rounded\"]",
+    "#main span[data-icon=\"clip\"]"
+  ],
+  "image_input": [
+    "input[type=\"file\"][accept^=\"image\"]",
+    "input[type=\"file\"][accept*=\"image\"]"
+  ],
+  "caption_box": [
+    "[aria-label=\"Add a caption\"]",
+    "[aria-label*=\"caption\" i][contenteditable=\"true\"]"
+  ],
+  "send_button": [
+    "[aria-label=\"Send\"]",
+    "span[data-icon=\"send\"]",
+    "span[data-icon=\"wds-ic-send-filled\"]"
+  ],
+  "outgoing": [
+    "#main div.message-out",
+    "#main [data-id^=\"true_\"]"
+  ],
+  "message_text": [
+    "span.selectable-text",
+    "span.copyable-text"
+  ],
+  "any_message": [
+    "#main [data-id]"
+  ],
+  "tick": [
+    "[data-icon=\"msg-check\"]",
+    "[data-icon=\"msg-dblcheck\"]",
+    "[data-icon=\"msg-dblcheck-ack\"]"
+  ],
+  "clock": [
+    "[data-icon=\"msg-time\"]"
+  ],
+  "failed": [
+    "[data-icon=\"msg-error\"]",
+    "[data-icon*=\"error\"]"
+  ]
+}

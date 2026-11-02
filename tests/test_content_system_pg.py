@@ -323,3 +323,61 @@ def test_a_failed_approve_then_a_reject_on_postgres(pg, tmp_path):
     out = run(go())
     assert out.ok and out.message == "❌ Rejected"
     assert admin_rows(pg, "select status from public.campaigns where campaign_id = %s", (cid,)) == [("rejected",)]
+
+
+# ── publishing (publishing/publish.py) on the real database, as content_app ──
+
+
+def test_publish_reads_the_approved_campaign_and_records_one_post(pg, tmp_path):
+    from publishing.publish import BROWSER_LEASE, effect_key, forget, publish_campaign
+    from publishing.whatsapp_web import PostResult
+
+    cid = "2026-W45-V4-001"
+    with psycopg.connect(pg["admin"], autocommit=True) as conn:
+        conn.execute("insert into public.campaigns (campaign_id, event_name, city, status, caption, image_url) "
+                     "values (%s, 'Test', 'Paris', 'approved', 'Approved text', 'https://x/img.jpg')", (cid,))
+
+    class FakeWA:
+        calls = 0
+
+        async def post_image(self, target, image, caption, *, dry_run=False, allow_repeat=False):
+            FakeWA.calls += 1
+            return PostResult("posted", target, "true_1@g.us_A", "2026-11-02T10:00:00+00:00", ())
+
+    async def fetch(url):
+        return b"\xff\xd8jpeg"
+
+    async def go():
+        db = Database(pg["app"], max_size=2)
+        await db.open()
+        try:
+            store = PgStore(db.pool)
+            row = await store.campaign_for_publish(cid)
+            assert (row["status"], row["caption"]) == ("approved", "Approved text")
+            first = await publish_campaign(store, FakeWA(), cid, "BBC Deals", enabled=True, work_dir=tmp_path,
+                                           fetch=fetch)
+            again = await publish_campaign(store, FakeWA(), cid, "BBC Deals", enabled=True, work_dir=tmp_path,
+                                           fetch=fetch)
+            assert first == again and FakeWA.calls == 1
+            assert await store.effect_status(effect_key(cid, "BBC Deals")) == "done"
+            async with store.lease(BROWSER_LEASE, wait=1):      # released after each post
+                pass
+            return await store.effect_status(effect_key(cid, "Other chat"))
+        finally:
+            await db.close()
+
+    assert run(go()) is None
+    rows = admin_rows(pg, "select status, external_id from content.effects where key = %s",
+                      (effect_key(cid, "BBC Deals"),))
+    assert rows and rows[0][0] == "done" and '"true_1@g.us_A"' in rows[0][1]
+
+    async def clear():
+        db = Database(pg["app"], max_size=1)
+        await db.open()
+        try:
+            return await forget(PgStore(db.pool), cid, "BBC Deals")
+        finally:
+            await db.close()
+
+    assert run(clear()) == "done"                                 # content_app may clear its own record
+    assert admin_rows(pg, "select 1 from content.effects where key = %s", (effect_key(cid, "BBC Deals"),)) == []

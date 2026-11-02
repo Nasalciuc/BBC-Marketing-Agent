@@ -1,0 +1,8 @@
+# Stricter lint for the publishing package (the root ruff.toml stays as it is for the old code).
+# ASYNC catches blocking calls inside async functions — the bug class found in the old handlers.
+extend = "../ruff.toml"
+src = [".."]                    # repo root: services, prompts, config are first-party
+
+[lint]
+extend-select = ["ASYNC", "B", "BLE", "UP", "SIM", "RUF", "I"]
+ignore = ["RUF001", "RUF003"]   # the copy is full of real typography: "·", "—", "’"
