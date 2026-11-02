@@ -11,6 +11,10 @@ A reply is recognised by the line every message of ours carries ("📋 <id> · v
 review caption, "✏️ <id> · v<n>" at the start of an edit prompt) on a message sent by this bot —
 so it still works for a review message whose id was never recorded, and when the database is down
 the reply gets an answer instead of falling through to the AI conversation handler.
+
+With Betty's assistant on (CONTENT_ASSISTANT_ENABLED), only a reply to the "✏️" prompt is taken as
+the exact new caption; a reply to the post itself goes to the assistant ("mai scurt…"), which
+rewrites it into a new version — so a remark is never published as the caption by mistake.
 """
 from __future__ import annotations
 
@@ -96,14 +100,23 @@ def _bot_id() -> int | None:
     return int(head) if head.isdigit() else None
 
 
-def ours(replied: dict) -> tuple[str, int] | None:
-    """(campaign_id, version) when `replied` is a review or edit message sent by this bot, else None."""
+def marked(replied: dict) -> tuple[str, int, str] | None:
+    """(campaign_id, version, "review" | "edit_prompt") when `replied` is one of this bot's messages."""
     sender = replied.get("from") or {}
     bot_id = _bot_id()
     if not sender.get("is_bot") or (bot_id is not None and sender.get("id") != bot_id):
         return None
-    m = _REVIEW_MARK.search(replied.get("caption") or "") or _PROMPT_MARK.search(replied.get("text") or "")
-    return (m.group(1), int(m.group(2))) if m else None
+    m = _PROMPT_MARK.search(replied.get("text") or "")
+    if m:
+        return m.group(1), int(m.group(2)), "edit_prompt"
+    m = _REVIEW_MARK.search(replied.get("caption") or "")
+    return (m.group(1), int(m.group(2)), "review") if m else None
+
+
+def ours(replied: dict) -> tuple[str, int] | None:
+    """(campaign_id, version) when `replied` is a review or edit message sent by this bot, else None."""
+    m = marked(replied)
+    return (m[0], m[1]) if m else None
 
 
 async def _answer(callback_id: str, text: str, telegram: Any = None) -> None:
@@ -193,7 +206,10 @@ async def handle_reply(msg: dict, update_id: int | None) -> bool:
     if chat_id is None or replied.get("message_id") is None:
         return False
     here = msg.get("message_id")
-    mark = ours(replied)
+    mark = marked(replied)
+    assistant = get_settings().assistant_on
+    if assistant and mark is not None and mark[2] == "review":
+        return False                     # a reply to the post itself: the assistant takes it
     try:
         lv = await live()
     except Exception:
@@ -211,7 +227,7 @@ async def handle_reply(msg: dict, update_id: int | None) -> bool:
         except Exception:
             log.exception("content system unavailable")
             return False
-        if ref is None:
+        if ref is None or (assistant and ref["kind"] == "review"):
             return False
         campaign_id = ref["campaign_id"]
     tg = lv.services.telegram

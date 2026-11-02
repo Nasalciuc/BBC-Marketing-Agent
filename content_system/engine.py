@@ -110,6 +110,10 @@ async def decide(graph: Any, services: Services, campaign_id: str, action: str, 
             failed = (current.values.get("decision") or {}).get("action")
             pause = None if (failed == action and action != "edit") else await _last_pause(graph, campaign_id)
             if pause is None:   # the same tap again (or never paused yet): finish what failed
+                if version is not None and version != current.version:
+                    # a tap (or an assistant card) on an older version never completes a newer one
+                    return Outcome(False, f"That was v{version}; the latest is v{current.version} — "
+                                          "use the newest message", current)
                 log.info("%s: completing the %s that failed at %s", campaign_id, failed, current.next_nodes)
                 await graph.ainvoke(None, cfg, context=services, durability="sync")
                 current = await view(graph, campaign_id)
@@ -121,7 +125,8 @@ async def decide(graph: Any, services: Services, campaign_id: str, action: str, 
                 current, resume_cfg = pause
         if not current.waiting:
             return Outcome(False, f"Already {current.status} — nothing changed", current)
-        if action != "edit" and version is not None and version != current.version:
+        # an edit with a version (the assistant's) applies only to that version; the ✏️ reply passes none
+        if version is not None and version != current.version:
             return Outcome(False, f"That was v{version}; the latest is v{current.version} — use the newest message",
                            current)
         decision: dict[str, Any] = {"action": action}

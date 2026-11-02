@@ -17,6 +17,7 @@ from psycopg_pool import AsyncConnectionPool
 from content_system.settings import db_url_problem
 
 CONTENT_TABLES = ("effects", "messages", "leases")
+ASSISTANT_TABLES = ("proposals", "ideas", "usage")       # migrations/012, needed with the assistant on
 CHECKPOINT_TABLES = ("checkpoint_migrations", "checkpoints", "checkpoint_blobs", "checkpoint_writes")
 CAMPAIGN_COLUMNS_NEEDED = (
     "campaign_id", "event_name", "city", "dates_start", "dates_end", "category", "route", "price",
@@ -60,8 +61,13 @@ class Database:
         """Create or migrate LangGraph's checkpoint tables (idempotent). Needs CREATE on schema content."""
         await self.checkpointer().setup()
 
-    async def verify(self) -> tuple[list[str], list[str]]:
-        """(problems, notes) — problems block `send`; notes are worth reading once."""
+    async def verify(self, *, assistant: bool | None = None) -> tuple[list[str], list[str]]:
+        """(problems, notes) — problems block `send`; notes are worth reading once. With the assistant
+        on (default: CONTENT_ASSISTANT_ENABLED), the tables of migrations/012 are required too."""
+        if assistant is None:
+            from content_system.settings import get_settings
+
+            assistant = get_settings().assistant_on
         problems: list[str] = []
         notes: list[str] = []
         async with self.pool.connection() as conn:
@@ -72,11 +78,12 @@ class Database:
             if who["s"] != self.schema:
                 problems.append(f"schema {self.schema} does not exist (apply migrations/011_content_system.sql)")
                 return problems, notes
-            for t in CONTENT_TABLES + CHECKPOINT_TABLES:
+            for t in CONTENT_TABLES + CHECKPOINT_TABLES + (ASSISTANT_TABLES if assistant else ()):
                 row = await (await conn.execute(
                     "select to_regclass(%s) is not null as ok", (f"{self.schema}.{t}",))).fetchone()
                 if not row["ok"]:
-                    hint = "python -m content_system db-setup" if t in CHECKPOINT_TABLES else "migrations/011"
+                    hint = ("python -m content_system db-setup" if t in CHECKPOINT_TABLES
+                            else "migrations/012" if t in ASSISTANT_TABLES else "migrations/011")
                     problems.append(f"{self.schema}.{t} missing ({hint})")
             rows = await (await conn.execute(
                 "select column_name from information_schema.columns "
