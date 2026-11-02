@@ -223,18 +223,22 @@ class StatusUnavailable(Exception):
     """Supabase could not be read or written, so nothing was changed."""
 
 
-async def update_campaign_status(campaign_id: str, status: str):
-    """Actualizează statusul unui campaign — never one that is already sent or cancelled."""
+async def update_campaign_status(campaign_id: str, status: str) -> bool:
+    """Actualizează statusul unui campaign — never one that is already sent or cancelled.
+
+    True only when a row was updated; False when there is no client, the query failed, or no row
+    matched (it doesn't exist, or it is sent/cancelled), so callers never report a change that didn't happen.
+    """
     client = _get_client()
     if not client:
-        return
+        return False
     try:
         update_data: dict = {"status": status}
         if status == "approved":
             update_data["approved_at"] = datetime.now(UTC).isoformat()
         elif status == "sent":
             update_data["sent_at"] = datetime.now(UTC).isoformat()
-        (
+        result = (
             client.table("campaigns")
             .update(update_data)
             .eq("campaign_id", campaign_id)
@@ -243,6 +247,8 @@ async def update_campaign_status(campaign_id: str, status: str):
         )
     except Exception as e:
         log.error("Failed to update campaign status: %s", e)
+        return False
+    return bool(result.data)
 
 
 async def get_active_contacts() -> list[dict]:
