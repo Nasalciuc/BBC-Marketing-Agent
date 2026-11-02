@@ -103,6 +103,19 @@ async def telegram_webhook(request: Request):
             await handle_callback(cb, data.get("update_id"))
             return {"ok": True}
 
+        if callback_data.startswith("ca:"):
+            from content_system.settings import get_settings as content_settings
+
+            if content_settings().assistant_on:
+                from content_system.assistant.router import route_card
+
+                await route_card(cb, data.get("update_id"))
+            else:
+                from services.telegram_client import answer_callback_query
+
+                await answer_callback_query(callback_id, "The assistant is off (CONTENT_ASSISTANT_ENABLED=false)")
+            return {"ok": True}
+
         from keyboards import parse_callback
 
         action, campaign_id = parse_callback(callback_data)
@@ -177,22 +190,29 @@ async def telegram_webhook(request: Request):
         chat_id = msg.get("chat", {}).get("id", 0)
         user_id = msg.get("from", {}).get("id", 0)
 
+        from content_system.settings import get_settings as content_settings
         from handlers.common import is_admin
 
         if not is_admin(user_id):
             from services.telegram_client import send_message
 
-            await send_message(chat_id=chat_id, text="⛔ Access denied.")
+            denied = "⛔ Access denied."
+            if content_settings().assistant_on and text.startswith("/start"):
+                # so a new reviewer can send Scaler the id that goes into TELEGRAM_ADMIN_IDS
+                denied += f"\nYour Telegram ID is {user_id} — send it to Scaler to get access."
+            await send_message(chat_id=chat_id, text=denied)
             return {"ok": True}
 
-        if msg.get("reply_to_message"):
-            from content_system.settings import get_settings as content_settings
+        if content_settings().assistant_on:
+            from content_system.assistant.router import route_message
 
-            if content_settings().enabled:
-                from content_system.bridge import handle_reply
+            if await route_message(msg, data.get("update_id")):
+                return {"ok": True}
+        elif msg.get("reply_to_message") and content_settings().enabled:
+            from content_system.bridge import handle_reply
 
-                if await handle_reply(msg, data.get("update_id")):
-                    return {"ok": True}
+            if await handle_reply(msg, data.get("update_id")):
+                return {"ok": True}
 
         if text.startswith("/start"):
             from handlers.common import handle_start

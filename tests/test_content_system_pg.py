@@ -22,7 +22,7 @@ from content_system.graph import build_graph
 from content_system.manifest import compose_caption, load_week
 from content_system.store import EffectBusy, LeaseBusy, PgStore
 from services.design_system import Style
-from tests.content_fakes import FAST_RETRY, ROOT, make_services, week42
+from tests.content_fakes import CHAT, FAST_RETRY, ROOT, make_services, week42
 
 ADMIN_URL = os.environ.get("CONTENT_TEST_DB_URL", "")
 pytestmark = pytest.mark.skipif(not ADMIN_URL, reason="CONTENT_TEST_DB_URL not set")
@@ -30,7 +30,7 @@ pytestmark = pytest.mark.skipif(not ADMIN_URL, reason="CONTENT_TEST_DB_URL not s
 MIGRATIONS = (
     "000_baseline_schema.sql", "005_review_tracking.sql", "006_chat_context.sql",
     "008_campaign_scheduled_day.sql", "009_campaign_design_fields.sql",
-    "010_rls_and_campaign_statuses.sql", "011_content_system.sql",
+    "010_rls_and_campaign_statuses.sql", "011_content_system.sql", "012_assistant.sql",
 )
 APP_PASSWORD = "content-test-password"
 
@@ -64,6 +64,7 @@ def pg():
         for f in MIGRATIONS:
             conn.execute((ROOT / "migrations" / f).read_text(encoding="utf-8"))
         conn.execute((ROOT / "migrations" / "011_content_system.sql").read_text(encoding="utf-8"))  # idempotent
+        conn.execute((ROOT / "migrations" / "012_assistant.sql").read_text(encoding="utf-8"))       # idempotent
         conn.execute(f"alter role content_app with login password '{APP_PASSWORD}'")
     yield {"app": _url(admin_db, user="content_app", password=APP_PASSWORD), "admin": admin_db}
     with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
@@ -95,6 +96,86 @@ def test_setup_and_verify(pg, tmp_path):
     problems, notes = run(go())
     assert problems == []
     assert notes[0] == "connected as content_app, schema content"
+
+
+def test_setup_and_verify_with_the_assistant_tables(pg, tmp_path):
+    async def go():
+        db, *_ = await system(pg, tmp_path)
+        try:
+            return await db.verify(assistant=True)
+        finally:
+            await db.close()
+
+    assert run(go())[0] == []
+    with psycopg.connect(pg["admin"], autocommit=True) as conn:
+        conn.execute("drop table content.ideas")
+
+    problems = run(go())[0]
+    assert problems == ["content.ideas missing (migrations/012)"]
+
+
+def test_a_card_is_used_once_even_when_two_taps_race(pg, tmp_path):
+    """migrations/012: the first tap takes the card; a parallel second tap (another worker) gets nothing."""
+    async def go():
+        db, services, *_ = await system(pg, tmp_path)
+        store = services.store
+        try:
+            items = [{"campaign_id": "2026-W45-V4-001", "version": 2, "label": "Wed 04 Nov · Monaco"}]
+            await store.add_proposal("aaaaaaaaaaa1", "ggggggggggg1", CHAT, "approve", items)
+            await store.add_proposal("aaaaaaaaaaa2", "ggggggggggg1", CHAT, "approve", items)
+            first, second = await asyncio.gather(store.take_proposal("aaaaaaaaaaa1"),
+                                                 store.take_proposal("aaaaaaaaaaa1"))
+            sibling = await store.take_proposal("aaaaaaaaaaa2")
+            await store.add_proposal("bbbbbbbbbbb1", "hhhhhhhhhhh1", CHAT, "reject", items)
+            dismissed = await store.dismiss_group("hhhhhhhhhhh1")
+            after_dismiss = await store.take_proposal("bbbbbbbbbbb1")
+            await store.add_proposal("ccccccccccc1", "iiiiiiiiiii1", CHAT, "approve", items)
+            return first, second, sibling, dismissed, after_dismiss, store
+        finally:
+            await db.close()
+
+    first, second, sibling, dismissed, after_dismiss, _ = run(go())
+    outcomes = sorted([first[0], second[0]])
+    assert outcomes == ["taken", "used"]
+    taken = first if first[0] == "taken" else second
+    assert taken[1]["action"] == "approve" and taken[1]["items"][0]["version"] == 2
+    assert sibling == ("dismissed", None) and dismissed == 1 and after_dismiss == ("dismissed", None)
+    with psycopg.connect(pg["admin"], autocommit=True) as conn:
+        conn.execute("update content.proposals set created_at = now() - interval '49 hours' where id = 'ccccccccccc1'")
+
+    async def expired():
+        db, services, *_ = await system(pg, tmp_path)
+        try:
+            return await services.store.take_proposal("ccccccccccc1"), await services.store.take_proposal("nonexistent0")
+        finally:
+            await db.close()
+
+    assert run(expired()) == (("expired", None), ("missing", None))
+
+
+def test_ideas_usage_and_reviewed_posts_on_postgres(pg, tmp_path):
+    async def go():
+        db, services, tg, graph = await system(pg, tmp_path)
+        store = services.store
+        try:
+            n = await store.add_idea(CHAT, 1, "Gala de la Monaco în decembrie")
+            await store.add_usage("claude-haiku-5-5", 2, 2200, 90, 0.000265)
+            await store.add_usage("claude-haiku-5-5", 1, 1000, 10, 0.000105)
+            await store.add_usage("claude-sonnet-5-5", 1, 2000, 300, 0.007)
+            spent = await store.usage_today()
+            week = week42()
+            for p in week.posts[:2]:
+                await start(graph, services, week, p, "send")
+            return n, spent, await store.reviewed_posts()
+        finally:
+            await db.close()
+
+    n, spent, posts = run(go())
+    assert n == 1 and spent == pytest.approx(0.00737)
+    assert posts == ["2026-W42-V4-002", "2026-W42-V4-001"]
+    assert admin_rows(pg, "select calls, input_tokens from content.usage where model = 'claude-haiku-5-5'") \
+        == [(3, 3200)]
+    assert admin_rows(pg, "select text, status from content.ideas") == [("Gala de la Monaco în decembrie", "new")]
 
 
 def test_content_app_can_touch_only_what_it_needs(pg):
@@ -344,3 +425,51 @@ def test_a_failed_approve_then_a_reject_on_postgres(pg, tmp_path):
     out = run(go())
     assert out.ok and out.message == "❌ Rejected"
     assert admin_rows(pg, "select status from public.campaigns where campaign_id = %s", (cid,)) == [("rejected",)]
+
+
+def test_the_assistant_on_postgres_proposes_and_a_tap_approves(pg, tmp_path, monkeypatch):
+    """The whole path on Postgres: the chat's memory in the checkpointer, the card in content.proposals,
+    the tap deciding public.campaigns — with a scripted model, no API call."""
+    from content_system import bridge
+    from content_system.assistant import router
+    from content_system.assistant.agent import Assistant
+    from content_system.settings import get_settings
+    from tests.test_assistant import Script, Writer, call, say
+
+    monkeypatch.setenv("CONTENT_ENABLED", "true")
+    monkeypatch.setenv("CONTENT_ASSISTANT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    async def go():
+        db, services, tg, graph = await system(pg, tmp_path)
+        try:
+            week = week42()
+            for p in week.posts[:2]:
+                await start(graph, services, week, p, "send")
+            lv = bridge.Live(settings=get_settings(), graph=graph, services=services)
+            a = Assistant(lv, model=Script(replies=[call("propose_approve", 1, campaign_ids=["all"]), say("Cardul e aici.")],
+                                           seen=[]),
+                          fallback=Script(replies=[], seen=[]), writer=Writer())
+            ctx = await a.handle(CHAT, 1, "aprob tot", update_id=1)
+            card = next(c[1] for c in reversed(tg.sent("sendMessage")) if "inline_keyboard" in (c[1].get("reply_markup") or {}))
+            every = card["reply_markup"]["inline_keyboard"][2][0]["callback_data"]
+            from content_system.assistant.proposals import handle_card
+
+            await handle_card(lv, {"id": "cb", "data": every, "message": {"message_id": 1, "chat": {"id": CHAT}}}, 2)
+            memory = await graph.checkpointer.aget_tuple({"configurable": {"thread_id": f"chat:{CHAT}"}})
+            return ctx, memory, await services.store.usage_today()
+        finally:
+            await db.close()
+
+    try:
+        ctx, memory, spent = run(go())
+    finally:
+        get_settings.cache_clear()
+        router.use(None)
+    assert ctx.done == ["propose:approve:2026-W42-V4-001,2026-W42-V4-002"]
+    assert [m.type for m in memory.checkpoint["channel_values"]["messages"]] == ["human", "ai", "tool", "ai"]
+    assert admin_rows(pg, "select campaign_id, status from public.campaigns order by 1") == \
+        [("2026-W42-V4-001", "approved"), ("2026-W42-V4-002", "approved")]
+    assert admin_rows(pg, "select status from content.proposals order by status") == \
+        [("dismissed",), ("dismissed",), ("used",)]
+    assert spent > 0

@@ -24,6 +24,19 @@ class ContentSettings(BaseSettings):
     lock_timeout_s: float = 8.0    # how long a tap waits for another tap on the same post (toast deadline)
     output_root: str = "output/content"
 
+    # Betty's assistant (content_system/assistant) — needs enabled=true too, and migrations/012
+    assistant_enabled: bool = False
+    assistant_model: str = "claude-haiku-5-5"
+    assistant_fallback_model: str = "claude-sonnet-5-5"
+    writer_model: str = "claude-sonnet-5-5"
+    assistant_daily_usd: float = 3.0   # above it the AI stops for the day; the menu and the buttons go on
+    assistant_history: int = 30        # messages of the chat the assistant remembers
+    owner_chat_id: str = ""            # Scaler's Telegram chat: what the assistant can't do goes there
+
+    @property
+    def assistant_on(self) -> bool:
+        return self.enabled and self.assistant_enabled
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> ContentSettings:

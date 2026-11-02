@@ -28,6 +28,8 @@ python-dotenv>=1.0.1
 # Content system (LangGraph) — exact pins: the checkpoint format and the interrupt API are part
 # of our stored data, so an upgrade is a deliberate PR with the tests run against Postgres.
 langgraph==1.2.15
+langchain==1.4.6                     # Betty's assistant: create_agent + middleware (PR-2)
+langchain-anthropic==1.7.6
 langgraph-checkpoint==4.3.0
 langgraph-checkpoint-postgres==3.2.0
 psycopg[binary]==3.3.6

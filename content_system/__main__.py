@@ -175,6 +175,19 @@ async def cmd_send(args: argparse.Namespace) -> None:
                           " or reject it and add it again with a new id")
             print(f"  {'→' if v.waiting else '='} {p.day_label}  {p.campaign_id}  v{v.version}  {v.status}{extra}")
         print(f"\n{waiting}/{len(week.posts)} waiting for review on Telegram.")
+        if cs.assistant_on and waiting:
+            from content_system.assistant.posts import info
+            from content_system.assistant.proposals import propose
+            from content_system.engine import view
+
+            posts = [p for c in week.posts if (p := info(await view(graph, c.campaign_id)))]
+
+            async def approve_all() -> str:
+                return await propose(store, services.telegram, services.chat_id, "approve", posts,
+                                     intro="Le aprobi deodată? Sau una câte una, pe butoanele fiecărei postări.")
+
+            await store.once(f"approve-all:{week.name}", approve_all)
+            print("  + card “Le aprobi deodată?” (the assistant is on)")
         if failed:
             stop(f"{len(failed)} post(s) failed: {', '.join(failed)} — fix the cause above, then run send again "
                  "(finished posts are skipped, failed ones continue where they stopped)")

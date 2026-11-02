@@ -8,6 +8,8 @@ Everything the graph writes outside its own checkpoints, behind one interface:
                     process dies holding it (no session state, so it works through any pooler)
   campaigns         public.campaigns — the row the bot, /deals and the publishing step read
   messages          which Telegram message belongs to which post and version
+  proposals         the assistant's "✅ Aprob …" cards, with the exact versions shown (migrations/012)
+  ideas, usage      Betty's ideas for the plan; model calls per day, for the daily cost limit
 
 PgStore is production (schema `content` + public.campaigns). MemoryStore mirrors it for
 `render` and the tests; tests/test_content_system_pg.py runs the same contract on both.
@@ -15,12 +17,13 @@ PgStore is production (schema `content` + public.campaigns). MemoryStore mirrors
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 log = logging.getLogger("bbc.content.store")
@@ -28,6 +31,7 @@ log = logging.getLogger("bbc.content.store")
 DECIDABLE = ("draft", "editing")        # statuses a content-system post can still change from
 STALE_EFFECT_S = 120.0                  # a 'running' effect older than this was abandoned by a crash
 LEASE_TTL_S = 600.0                     # a lease left by a dead process frees itself after this
+PROPOSAL_TTL_S = 48 * 3600.0            # an "✅ Aprob …" card older than this no longer decides anything
 
 
 class EffectBusy(RuntimeError):
@@ -52,6 +56,9 @@ class MemoryStore:
         self.messages: dict[tuple[int, int], dict[str, Any]] = {}
         self.leases: dict[str, tuple[str, float]] = {}
         self.threads: set[str] = set()          # stands in for the checkpoints table
+        self.proposals: dict[str, dict[str, Any]] = {}
+        self.ideas: list[dict[str, Any]] = []
+        self.usage: dict[tuple[date, str], dict[str, Any]] = {}
 
     async def once(self, key: str, fn: Callable[[], Awaitable[Any]], *,
                    forget_on: Callable[[Exception], bool] | None = None) -> Any:
@@ -134,6 +141,59 @@ class MemoryStore:
 
     async def reached_telegram(self, campaign_id: str) -> bool:
         return any(k.startswith(f"review:{campaign_id}:") for k in self.effects)
+
+    async def reviewed_posts(self, limit: int = 60) -> list[str]:
+        ids = {m["campaign_id"] for m in self.messages.values() if m["kind"] == "review"}
+        return sorted(ids, reverse=True)[:limit]
+
+    # ── the assistant (migrations/012) ──
+    async def add_proposal(self, proposal_id: str, group_id: str, chat_id: int, action: str,
+                           items: list[dict[str, Any]]) -> None:
+        self.proposals[proposal_id] = {"group_id": group_id, "chat_id": int(chat_id), "action": action,
+                                       "items": [dict(i) for i in items], "status": "open", "result": None,
+                                       "t": time.time()}
+
+    async def take_proposal(self, proposal_id: str, max_age_s: float = PROPOSAL_TTL_S) -> tuple[str, dict | None]:
+        """("taken", row) once — the caller then decides its items; else ("used" | "dismissed" |
+        "expired" | "missing", None)."""
+        p = self.proposals.get(proposal_id)
+        if p is None:
+            return "missing", None
+        if p["status"] != "open":
+            return p["status"], None
+        if time.time() - p["t"] > max_age_s:
+            return "expired", None
+        p["status"] = "used"
+        for other in self.proposals.values():
+            if other["group_id"] == p["group_id"] and other["status"] == "open":
+                other["status"] = "dismissed"
+        return "taken", {k: v for k, v in p.items() if k != "t"}
+
+    async def dismiss_group(self, group_id: str) -> int:
+        n = 0
+        for p in self.proposals.values():
+            if p["group_id"] == group_id and p["status"] == "open":
+                p["status"], n = "dismissed", n + 1
+        return n
+
+    async def set_proposal_result(self, proposal_id: str, result: list[dict[str, Any]]) -> None:
+        self.proposals[proposal_id]["result"] = result
+
+    async def add_idea(self, chat_id: int, user_id: int | None, text: str) -> int:
+        self.ideas.append({"chat_id": chat_id, "user_id": user_id, "text": text, "status": "new"})
+        return len(self.ideas)
+
+    async def add_usage(self, model: str, calls: int, input_tokens: int, output_tokens: int, cost_usd: float) -> None:
+        key = (datetime.now(UTC).date(), model)
+        row = self.usage.setdefault(key, {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0})
+        row["calls"] += calls
+        row["input_tokens"] += input_tokens
+        row["output_tokens"] += output_tokens
+        row["cost_usd"] += cost_usd
+
+    async def usage_today(self) -> float:
+        today = datetime.now(UTC).date()
+        return sum(r["cost_usd"] for (d, _), r in self.usage.items() if d == today)
 
 
 class PgStore:
@@ -278,3 +338,62 @@ class PgStore:
             "order by c.campaign_id",
             (campaign_ids,))
         return [r["campaign_id"] for r in rows]
+
+    async def reviewed_posts(self, limit: int = 60) -> list[str]:
+        """The posts that went to Telegram for review, newest week first."""
+        rows = await self._all(
+            "select campaign_id from messages where kind = 'review' group by campaign_id "
+            "order by campaign_id desc limit %s", (limit,))
+        return [r["campaign_id"] for r in rows]
+
+    # ── the assistant (migrations/012) ──
+    async def add_proposal(self, proposal_id: str, group_id: str, chat_id: int, action: str,
+                           items: list[dict[str, Any]]) -> None:
+        await self._one(
+            "insert into proposals (id, group_id, chat_id, action, items) values (%s, %s, %s, %s, %s::jsonb)",
+            (proposal_id, group_id, chat_id, action, json.dumps(items)))
+
+    async def take_proposal(self, proposal_id: str, max_age_s: float = PROPOSAL_TTL_S) -> tuple[str, dict | None]:
+        """Atomically ("taken", row) for the first tap; the rest of its group closes with it."""
+        row = await self._one(
+            "update proposals set status = 'used', used_at = now() "
+            "where id = %s and status = 'open' and created_at > now() - make_interval(secs => %s) "
+            "returning group_id, chat_id, action, items",
+            (proposal_id, max_age_s))
+        if row is not None:
+            await self._one("update proposals set status = 'dismissed' where group_id = %s and status = 'open'",
+                            (row["group_id"],))
+            return "taken", {**row, "items": list(row["items"]), "status": "used"}
+        cur = await self._one("select status from proposals where id = %s", (proposal_id,))
+        if cur is None:
+            return "missing", None
+        return ("expired" if cur["status"] == "open" else cur["status"]), None
+
+    async def dismiss_group(self, group_id: str) -> int:
+        rows = await self._all(
+            "update proposals set status = 'dismissed' where group_id = %s and status = 'open' returning id",
+            (group_id,))
+        return len(rows)
+
+    async def set_proposal_result(self, proposal_id: str, result: list[dict[str, Any]]) -> None:
+        await self._one("update proposals set result = %s::jsonb where id = %s", (json.dumps(result), proposal_id))
+
+    async def add_idea(self, chat_id: int, user_id: int | None, text: str) -> int:
+        row = await self._one("insert into ideas (chat_id, user_id, text) values (%s, %s, %s) returning id",
+                              (chat_id, user_id, text))
+        return int(row["id"])
+
+    async def add_usage(self, model: str, calls: int, input_tokens: int, output_tokens: int, cost_usd: float) -> None:
+        await self._one(
+            "insert into usage (day, model, calls, input_tokens, output_tokens, cost_usd) "
+            "values ((now() at time zone 'utc')::date, %s, %s, %s, %s, %s) "
+            "on conflict (day, model) do update set calls = usage.calls + excluded.calls, "
+            "input_tokens = usage.input_tokens + excluded.input_tokens, "
+            "output_tokens = usage.output_tokens + excluded.output_tokens, "
+            "cost_usd = usage.cost_usd + excluded.cost_usd",
+            (model, calls, input_tokens, output_tokens, cost_usd))
+
+    async def usage_today(self) -> float:
+        row = await self._one(
+            "select coalesce(sum(cost_usd), 0)::float8 as usd from usage where day = (now() at time zone 'utc')::date")
+        return float(row["usd"]) if row else 0.0
