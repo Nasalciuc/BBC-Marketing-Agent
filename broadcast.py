@@ -11,6 +11,9 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+# httpx logs each request URL at INFO, and a Telegram URL contains the bot token.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("bbc.broadcast")
 
 
@@ -19,6 +22,12 @@ def _week_label() -> str:
 
 
 async def run_broadcast():
+    from config import settings
+
+    if not settings.broadcast_enabled:
+        log.warning("Broadcast is off (BROADCAST_ENABLED=false): nothing sent")
+        return
+
     log.info("Starting weekly broadcast...")
 
     from services.notifier import send_error_alert

@@ -216,8 +216,11 @@ async def get_approved_campaigns() -> list[dict]:
         return []
 
 
+FINAL_STATUSES = ("sent", "cancelled")  # a campaign in one of these never changes status again
+
+
 async def update_campaign_status(campaign_id: str, status: str):
-    """Actualizează statusul unui campaign."""
+    """Actualizează statusul unui campaign — never one that is already sent or cancelled."""
     client = _get_client()
     if not client:
         return
@@ -227,7 +230,13 @@ async def update_campaign_status(campaign_id: str, status: str):
             update_data["approved_at"] = datetime.now(UTC).isoformat()
         elif status == "sent":
             update_data["sent_at"] = datetime.now(UTC).isoformat()
-        client.table("campaigns").update(update_data).eq("campaign_id", campaign_id).execute()
+        (
+            client.table("campaigns")
+            .update(update_data)
+            .eq("campaign_id", campaign_id)
+            .not_.in_("status", list(FINAL_STATUSES))
+            .execute()
+        )
     except Exception as e:
         log.error("Failed to update campaign status: %s", e)
 
@@ -275,3 +284,22 @@ async def log_broadcast(
         ).execute()
     except Exception as e:
         log.error("Failed to log broadcast: %s", e)
+
+
+async def get_campaign_status(campaign_id: str) -> str | None:
+    """Current status of a campaign, or None when it can't be read (no client, no row, error)."""
+    client = _get_client()
+    if not client or not campaign_id:
+        return None
+    try:
+        r = (
+            client.table("campaigns")
+            .select("status")
+            .eq("campaign_id", campaign_id)
+            .limit(1)
+            .execute()
+        )
+        return r.data[0]["status"] if r.data else None
+    except Exception as e:
+        log.error("Failed to read campaign status %s: %s", campaign_id, e)
+        return None

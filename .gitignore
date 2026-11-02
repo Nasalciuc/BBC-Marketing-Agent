@@ -25,6 +25,7 @@ htmlcov/
 downloads/
 *.sqlite
 output/
+graphify-out/
 
 # OS
 .DS_Store

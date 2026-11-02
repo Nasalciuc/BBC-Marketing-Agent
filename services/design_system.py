@@ -70,7 +70,7 @@ CONTENT_TO_STYLE: dict[str, Style] = {
     "brand": Style.MINIMAL, "lifestyle": Style.MINIMAL,
 }
 
-from prompts.system_prompts import (
+from prompts.system_prompts import (  # noqa: E402 — after the constants on purpose
     CONTACT_LINE_LUX,  # noqa: F401 — single source for the contact line
 )
 
@@ -331,10 +331,13 @@ def _qa(metrics: dict) -> list[str]:
         def off(a, b, name):
             if abs(p[a] - p[b]) > 2:
                 issues.append(f"pass: {name} misaligned ({p[a]:.0f} vs {p[b]:.0f})")
-        off("flabelL", "fareL", "stub label/fare"); off("fareL", "fclassL", "stub fare/class")
-        off("perfX", "notchX", "perforation/notch"); off("tagTop", "flabelTop", "row 1 across perforation")
+        off("flabelL", "fareL", "stub label/fare")
+        off("fareL", "fclassL", "stub fare/class")
+        off("perfX", "notchX", "perforation/notch")
+        off("tagTop", "flabelTop", "row 1 across perforation")
         if "originL" in p:
-            off("originL", "originCityL", "origin code/city"); off("destR", "destCityR", "destination code/city")
+            off("originL", "originCityL", "origin code/city")
+            off("destR", "destCityR", "destination code/city")
     return issues
 
 

@@ -153,6 +153,16 @@ async def handle_post_now(
         send_message,
     )
 
+    from config import settings
+
+    if not settings.broadcast_enabled:
+        await answer_callback_query(callback_id, "📤 Sending to clients is off")
+        await send_message(
+            chat_id=chat_id,
+            text="📤 Sending to clients is switched off (`BROADCAST_ENABLED=false`). Nothing was sent.",
+        )
+        return
+
     await answer_callback_query(callback_id, "📤 Sending...")
     await send_message(chat_id=chat_id, text=f"📤 Broadcasting *{campaign_id}*...")
 

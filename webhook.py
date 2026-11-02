@@ -5,17 +5,28 @@ FastAPI minimal care:
 2. Primește callbacks Telegram (approve/reject deals)
 3. Pornește MEREU, chiar dacă nu toate keys sunt setate
 """
+import hmac
 import logging
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+# httpx logs each request URL at INFO, and a Telegram URL contains the bot token.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("bbc.webhook")
 
-app = FastAPI(title="BBC Marketing Agent", version="1.0.0")
+app = FastAPI(
+    title="BBC Marketing Agent",
+    version="1.0.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 
 @app.get("/health")
@@ -43,62 +54,19 @@ async def root():
     return {"service": "BBC Marketing Agent", "status": "running"}
 
 
-@app.get("/debug/gemini")
-async def debug_gemini(full: bool = False):
-    """Test Gemini API (folosește GEMINI_API_KEY de pe Railway)."""
-    import asyncio
-
-    from config import settings
-
-    if not settings.gemini_api_key:
-        return {"ok": False, "error": "GEMINI_API_KEY not set"}
-
-    if not full:
-        def _ping():
-            from google import genai
-
-            client = genai.Client(api_key=settings.gemini_api_key)
-            r = client.models.generate_content(
-                model=settings.gemini_model,
-                contents="Reply with exactly: GEMINI_OK",
-            )
-            return (r.text or "").strip()[:200]
-
-        try:
-            text = await asyncio.to_thread(_ping)
-            return {"ok": True, "mode": "ping", "model": settings.gemini_model, "text": text}
-        except Exception as e:
-            log.error("Gemini ping failed: %s", e)
-            return {"ok": False, "error": str(e)}
-
-    from services.gemini_client import discover_events
-
-    try:
-        events = await discover_events(week_offset=1)
-        return {
-            "ok": True,
-            "mode": "discovery",
-            "events_count": len(events),
-            "events": events[:3],
-        }
-    except Exception as e:
-        log.error("Gemini discovery failed: %s", e)
-        return {"ok": False, "error": str(e)}
-
-
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
     """Telegram webhook — dispatch la handlers."""
-    try:
-        from config import settings
+    from config import settings
 
-        expected = settings.telegram_webhook_secret
-        received = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if expected and received != expected:
-            log.warning("Invalid Telegram webhook secret")
-            return {"ok": False}
-    except Exception:
-        pass
+    expected = settings.telegram_webhook_secret
+    received = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not expected:
+        log.error("TELEGRAM_WEBHOOK_SECRET is not set: refusing all Telegram updates")
+        return JSONResponse({"ok": False}, status_code=503)
+    if not hmac.compare_digest(received.encode(), expected.encode()):
+        log.warning("Invalid Telegram webhook secret")
+        return JSONResponse({"ok": False}, status_code=401)
 
     try:
         data = await request.json()
@@ -127,6 +95,12 @@ async def telegram_webhook(request: Request):
             from services.telegram_client import answer_callback_query
 
             await answer_callback_query(callback_id)
+            return {"ok": True}
+
+        if callback_data.startswith("cs:"):
+            from content_system.bridge import handle_callback
+
+            await handle_callback(cb, data.get("update_id"))
             return {"ok": True}
 
         from keyboards import parse_callback
@@ -210,6 +184,15 @@ async def telegram_webhook(request: Request):
 
             await send_message(chat_id=chat_id, text="⛔ Access denied.")
             return {"ok": True}
+
+        if msg.get("reply_to_message"):
+            from content_system.settings import get_settings as content_settings
+
+            if content_settings().enabled:
+                from content_system.bridge import handle_reply
+
+                if await handle_reply(msg, data.get("update_id")):
+                    return {"ok": True}
 
         if text.startswith("/start"):
             from handlers.common import handle_start

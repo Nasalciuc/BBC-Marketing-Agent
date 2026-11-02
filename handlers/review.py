@@ -6,6 +6,9 @@ import tempfile
 
 log = logging.getLogger("bbc.handlers.review")
 
+# A post that reached clients, or was closed, is never changed by a late or double tap.
+LOCKED_STATUSES = {"sent", "cancelled"}
+
 
 async def handle_approve(
     campaign_id: str, callback_id: str, chat_id: int, message_id: int
@@ -14,6 +17,13 @@ async def handle_approve(
     from services.sheets_client import update_deal_status
     from services.supabase_client import update_campaign_status
     from services.telegram_client import answer_callback_query, edit_message_reply_markup
+
+    from services.supabase_client import get_campaign_status
+
+    current = await get_campaign_status(campaign_id)
+    if current in LOCKED_STATUSES | {"approved"}:
+        await answer_callback_query(callback_id, f"Already {current}: nothing changed")
+        return
 
     log.info("Approved: %s", campaign_id)
     update_deal_status(campaign_id, "approved")
@@ -29,6 +39,13 @@ async def handle_reject(
     from services.sheets_client import update_deal_status
     from services.supabase_client import update_campaign_status
     from services.telegram_client import answer_callback_query, edit_message_reply_markup
+
+    from services.supabase_client import get_campaign_status
+
+    current = await get_campaign_status(campaign_id)
+    if current in LOCKED_STATUSES | {"rejected"}:
+        await answer_callback_query(callback_id, f"Already {current}: nothing changed")
+        return
 
     log.info("Rejected: %s", campaign_id)
     update_deal_status(campaign_id, "rejected")
@@ -83,6 +100,12 @@ async def handle_regenerate(campaign_id: str, callback_id: str, chat_id: int):
     from services.branding_engine import generate_branded_image
     from services.supabase_client import upload_image
     from services.telegram_client import answer_callback_query, send_approval_request, send_message
+
+    from config import settings
+
+    if not settings.legacy_regen_enabled:
+        await answer_callback_query(callback_id, "🔄 Regenerate is off for curated posts")
+        return
 
     await answer_callback_query(callback_id, "🔄 Regenerating...")
     await send_message(chat_id=chat_id, text=f"🔄 Regenerating *{campaign_id}*...")

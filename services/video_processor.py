@@ -85,7 +85,7 @@ def select_best_frame_with_claude(
     frames: list[str],
     event_name: str,
     anthropic_client=None,
-    model: str = "claude-sonnet-4-20250514",
+    model: str | None = None,
 ) -> str | None:
     """
     Claude SEES each frame and picks the best one for BBC.
@@ -140,8 +140,10 @@ REPLY with EXACTLY one of:
     )
 
     try:
+        from config import settings
+
         resp = anthropic_client.messages.create(
-            model=model,
+            model=model or settings.anthropic_model,
             max_tokens=50,
             messages=[{"role": "user", "content": images_content}],
         )
