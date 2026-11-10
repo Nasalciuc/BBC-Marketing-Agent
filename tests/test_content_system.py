@@ -413,6 +413,56 @@ def test_bridge_reply_with_bad_caption_explains(live):
     assert "Not applied" in env.tg.sent("sendMessage")[-1][1]["text"]
 
 
+def test_a_database_that_stops_answering_never_reaches_the_webhook(live):
+    """Found by CodeRabbit: the pool is open, so live() succeeds, and then claim() raises. The tap and
+    the reply must be answered, and nothing may raise into the webhook."""
+    env = live
+    cid = env.cid(1)
+
+    async def down(key):
+        raise ConnectionError("server closed the connection unexpectedly")
+
+    async def go():
+        await env.send_all()
+        review_id = (await view(env.graph, cid)).values["review_message_id"]
+        real_claim, env.store.claim = env.store.claim, down
+        await bridge.handle_callback(_cb(f"cs:a:{cid}:1"), update_id=70)
+        handled = await bridge.handle_reply({"message_id": 700, "chat": {"id": CHAT}, "text": "A new caption.",
+                                             "reply_to_message": {"message_id": review_id}}, update_id=71)
+        env.store.claim = real_claim
+        return handled, await view(env.graph, cid)
+
+    handled, v = run(go())
+    assert _toasts(env.tg)[-1] == "⚠️ The content system can't reach its database — try again later"
+    assert handled is True and "can't reach its database" in env.tg.sent("sendMessage")[-1][1]["text"]
+    assert v.waiting and v.version == 1 and env.store.campaigns[cid]["status"] == "draft"      # nothing changed
+
+
+def test_a_release_that_fails_still_answers_the_tap(live, monkeypatch):
+    """The decision failed and the database is why: release() fails too, and the toast still goes out."""
+    env = live
+    cid = env.cid(1)
+
+    async def boom(*a, **k):
+        raise RuntimeError("decide failed")
+
+    async def down(key):
+        raise ConnectionError("server closed the connection unexpectedly")
+
+    async def go():
+        await env.send_all()
+        monkeypatch.setattr(bridge, "decide", boom)
+        monkeypatch.setattr(env.store, "release", down)
+        await bridge.handle_callback(_cb(f"cs:a:{cid}:1"), update_id=80)
+        review_id = (await view(env.graph, cid)).values["review_message_id"]
+        return await bridge.handle_reply({"message_id": 800, "chat": {"id": CHAT}, "text": "A new caption.",
+                                          "reply_to_message": {"message_id": review_id}}, update_id=81)
+
+    handled = run(go())
+    assert _toasts(env.tg)[-1] == "⚠️ That didn't go through — tap again (the error is in the logs)"
+    assert handled is True and env.tg.sent("sendMessage")[-1][1]["text"].endswith("the edit didn't go through — send it again")
+
+
 def test_bridge_off_answers_and_lets_replies_through(tmp_path, monkeypatch):
     monkeypatch.setenv("CONTENT_ENABLED", "false")
     get_settings.cache_clear()

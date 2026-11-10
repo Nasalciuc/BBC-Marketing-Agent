@@ -290,4 +290,6 @@ async def send_broadcast_report(results: dict):
         f"❌ Failed: {results.get('failed', 0)}\n"
         f"📱 Group posted: {'✅' if results.get('group_posted') else '❌'}"
     )
+    if results.get("skipped"):
+        text += f"\n⏭ Not sent again (already sent, cancelled or unreadable): {results['skipped']}"
     await send_message(text=text)

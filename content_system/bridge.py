@@ -162,8 +162,14 @@ async def handle_callback(cb: dict, update_id: int | None) -> None:
         await _answer(callback_id, "⚠️ The content system can't reach its database — try again later")
         return
     key = f"tg:update:{update_id}" if update_id is not None else None
-    if key and not await lv.services.store.claim(key):
-        await _answer(callback_id, "", lv.services.telegram)       # Telegram delivered this tap twice
+    try:
+        if key and not await lv.services.store.claim(key):
+            await _answer(callback_id, "", lv.services.telegram)   # Telegram delivered this tap twice
+            return
+    except Exception:       # the pool was open, the database is not answering: the tap changed nothing
+        log.exception("content system unavailable")
+        await _answer(callback_id, "⚠️ The content system can't reach its database — try again later",
+                      lv.services.telegram)
         return
     try:
         if action == "edit":
@@ -174,14 +180,23 @@ async def handle_callback(cb: dict, update_id: int | None) -> None:
             text = out.message
     except LeaseBusy:
         text = "⏳ Another tap on this post is still running — try again in a few seconds"
-        if key:
-            await lv.services.store.release(key)
+        await _release(lv, key)
     except Exception:
         log.exception("content decision failed: %s %s v%s", action, campaign_id, version)
         text = "⚠️ That didn't go through — tap again (the error is in the logs)"
-        if key:
-            await lv.services.store.release(key)
+        await _release(lv, key)
     await _answer(callback_id, text, lv.services.telegram)
+
+
+async def _release(lv: Live, key: str | None) -> None:
+    """Give the update back so the same tap can be tried again. Never raises: when the database is
+    what failed, this fails too, and the person must still get their answer."""
+    if not key:
+        return
+    try:
+        await lv.services.store.release(key)
+    except Exception:
+        log.exception("could not release %s", key)
 
 
 async def handle_reply(msg: dict, update_id: int | None) -> bool:
@@ -225,7 +240,13 @@ async def handle_reply(msg: dict, update_id: int | None) -> bool:
         await _say(chat_id, "Send the new caption as text.", here, tg)
         return True
     key = f"tg:update:{update_id}" if update_id is not None else None
-    if key and not await lv.services.store.claim(key):
+    try:
+        if key and not await lv.services.store.claim(key):
+            return True
+    except Exception:
+        log.exception("content system unavailable")
+        await _say(chat_id, f"{campaign_id}: ⚠️ the content system can't reach its database — "
+                            "send the caption again in a minute", here, tg)
         return True
     try:
         out = await decide(lv.graph, lv.services, campaign_id, "edit", caption=text,
@@ -233,13 +254,11 @@ async def handle_reply(msg: dict, update_id: int | None) -> bool:
         if not out.ok:
             await _say(chat_id, f"{campaign_id}: {out.message}", here, tg)
     except LeaseBusy:
-        if key:
-            await lv.services.store.release(key)
+        await _release(lv, key)
         await _say(chat_id, f"{campaign_id}: another change is still running — send it again in a few seconds",
                    here, tg)
     except Exception:
         log.exception("content edit failed for %s", campaign_id)
-        if key:
-            await lv.services.store.release(key)
+        await _release(lv, key)
         await _say(chat_id, f"{campaign_id}: the edit didn't go through — send it again", here, tg)
     return True

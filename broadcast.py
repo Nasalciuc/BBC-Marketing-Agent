@@ -33,13 +33,15 @@ async def run_broadcast():
     from services.notifier import send_error_alert
     from services.sheets_client import get_approved_deals, update_deal_status
     from services.supabase_client import (
+        StatusUnavailable,
         get_active_contacts,
         get_approved_campaigns,
+        get_campaign_status,
         is_job_completed,
         record_job_complete,
         record_job_failed,
         record_job_start,
-        update_campaign_status,
+        reserve_campaign_for_sending,
     )
     from services.telegram_client import send_alert, send_broadcast_report
     from prompts.system_prompts import format_whatsapp_group
@@ -70,9 +72,28 @@ async def run_broadcast():
         contacts = await get_active_contacts()
         log.info("Broadcasting %d deals to %d contacts", len(approved), len(contacts))
 
-        total_results: dict = {"sent": 0, "failed": 0, "group_posted": False}
+        total_results: dict = {"sent": 0, "failed": 0, "group_posted": False, "skipped": 0}
 
         for deal in approved:
+            campaign_id = deal.get("campaign_id", "")
+            if campaign_id:
+                # The Sheet can still say "approved" after Post NOW or Cancel. Supabase decides: the
+                # campaign is marked sent in one guarded update before anything goes to a client, so
+                # it goes out at most once. A deal that is only in the Sheet is sent as before.
+                try:
+                    status = await get_campaign_status(campaign_id)
+                    reserved = status is None or await reserve_campaign_for_sending(campaign_id) is not None
+                except StatusUnavailable as e:
+                    log.error("campaign %s: status unreadable (%s): not sent", campaign_id, e)
+                    total_results["skipped"] += 1
+                    continue
+                if not reserved:
+                    log.warning("campaign %s is already sent or cancelled: not sent again", campaign_id)
+                    total_results["skipped"] += 1
+                    if status in ("sent", "cancelled"):
+                        update_deal_status(campaign_id, status)       # put the Sheet back in step
+                    continue
+
             if contacts:
                 results = await broadcast_deal(deal, contacts)
                 total_results["sent"] += results["sent"]
@@ -86,11 +107,8 @@ async def run_broadcast():
             if group_result.get("status") == "sent":
                 total_results["group_posted"] = True
 
-            campaign_id = deal.get("campaign_id", "")
             if campaign_id:
-                update_deal_status(campaign_id, "sent")
-                if not await update_campaign_status(campaign_id, "sent"):
-                    log.warning("campaign %s was sent, but its status could not be set to sent", campaign_id)
+                update_deal_status(campaign_id, "sent")       # Supabase was marked before the send
 
         await send_broadcast_report(total_results)
         await record_job_complete(job_id, events_count=len(approved), details=total_results)

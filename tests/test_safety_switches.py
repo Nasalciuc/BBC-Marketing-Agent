@@ -206,6 +206,129 @@ def test_broadcast_is_off_by_default(monkeypatch):
     asyncio.run(run_broadcast())
 
 
+@pytest.fixture
+def weekly(monkeypatch):
+    """run_broadcast with the switch on and every outside call recorded."""
+    import prompts.system_prompts as prompts
+    import services.notifier as notifier
+    import services.sheets_client as sheets
+    import services.supabase_client as sb
+    import services.telegram_client as tg
+    import services.twilio_client as twilio
+    import services.waha_client as waha
+
+    log = {"deals": [], "status": {}, "sent": [], "group": [], "reserved": [], "sheet": [], "report": []}
+
+    async def get_status(campaign_id):
+        value = log["status"].get(campaign_id)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    async def reserve(campaign_id):
+        if log["status"].get(campaign_id) in ("sent", "cancelled"):
+            return None
+        log["reserved"].append(campaign_id)
+        log["status"][campaign_id] = "sent"
+        return {"campaign_id": campaign_id, "status": "sent"}
+
+    async def broadcast_deal(deal, contacts):
+        log["sent"].append(deal["campaign_id"])
+        return {"sent": len(contacts), "failed": 0}
+
+    async def post_group(image_url="", caption=""):
+        log["group"].append(caption)
+        return {"status": "sent"}
+
+    async def nothing(*a, **k):
+        return None
+
+    async def not_done(*a, **k):
+        return False
+
+    async def contacts():
+        return [{"phone": "+1"}, {"phone": "+2"}]
+
+    async def report(results):
+        log["report"].append(dict(results))
+
+    def sheet_write(cid, status):
+        log["sheet"].append((cid, status))
+        return True
+
+    monkeypatch.setattr(settings, "broadcast_enabled", True)
+    monkeypatch.setattr(sheets, "get_approved_deals", lambda: list(log["deals"]))
+    monkeypatch.setattr(sheets, "update_deal_status", sheet_write)
+    monkeypatch.setattr(sb, "get_approved_campaigns", nothing)
+    monkeypatch.setattr(sb, "get_active_contacts", contacts)
+    monkeypatch.setattr(sb, "is_job_completed", not_done)
+    monkeypatch.setattr(sb, "record_job_start", nothing)
+    monkeypatch.setattr(sb, "record_job_complete", nothing)
+    monkeypatch.setattr(sb, "record_job_failed", nothing)
+    monkeypatch.setattr(sb, "get_campaign_status", get_status)
+    monkeypatch.setattr(sb, "reserve_campaign_for_sending", reserve)
+    monkeypatch.setattr(tg, "send_alert", nothing)
+    monkeypatch.setattr(tg, "send_broadcast_report", report)
+    monkeypatch.setattr(notifier, "send_error_alert", nothing)
+    monkeypatch.setattr(prompts, "format_whatsapp_group", lambda deal: deal["campaign_id"])
+    monkeypatch.setattr(twilio, "broadcast_deal", broadcast_deal)
+    monkeypatch.setattr(waha, "post_deal_to_group", post_group)
+    return log
+
+
+def _deal(campaign_id):
+    return {"campaign_id": campaign_id, "image_url": "https://x/y.jpg"}
+
+
+def test_the_weekly_broadcast_never_resends_what_supabase_says_is_closed(weekly):
+    """Found by CodeRabbit: the Sheet can still say approved after Post NOW or Cancel, and the weekly
+    broadcast read the Sheet and sent to clients again."""
+    from broadcast import run_broadcast
+
+    weekly["deals"] = [_deal("A-sent"), _deal("B-cancelled"), _deal("C-approved"), _deal("D-sheet-only")]
+    weekly["status"] = {"A-sent": "sent", "B-cancelled": "cancelled", "C-approved": "approved"}
+    asyncio.run(run_broadcast())
+    assert weekly["sent"] == ["C-approved", "D-sheet-only"] and weekly["group"] == ["C-approved", "D-sheet-only"]
+    assert weekly["reserved"] == ["C-approved"]                 # marked sent before it went out
+    assert weekly["report"][0]["skipped"] == 2 and weekly["report"][0]["sent"] == 4
+    # the Sheet is put back in step for the closed ones, and marked sent for what went out
+    assert weekly["sheet"] == [("A-sent", "sent"), ("B-cancelled", "cancelled"), ("C-approved", "sent"),
+                               ("D-sheet-only", "sent")]
+
+
+def test_the_weekly_broadcast_sends_nothing_it_cannot_check(weekly):
+    from broadcast import run_broadcast
+
+    weekly["deals"] = [_deal("A"), _deal("B")]
+    weekly["status"] = {"A": _unreadable(), "B": "approved"}
+    asyncio.run(run_broadcast())
+    assert weekly["sent"] == ["B"] and weekly["report"][0]["skipped"] == 1
+    assert ("A", "sent") not in weekly["sheet"]
+
+
+def test_the_weekly_broadcast_sends_a_campaign_once_even_if_the_sheet_lists_it_twice(weekly):
+    from broadcast import run_broadcast
+
+    weekly["deals"] = [_deal("A"), _deal("A")]
+    weekly["status"] = {"A": "approved"}
+    asyncio.run(run_broadcast())
+    assert weekly["sent"] == ["A"] and weekly["report"][0]["skipped"] == 1
+
+
+def test_the_broadcast_report_says_what_was_not_sent_again(monkeypatch):
+    import services.telegram_client as tg
+
+    said = []
+
+    async def send_message(chat_id=None, text="", **kwargs):
+        said.append(text)
+
+    monkeypatch.setattr(tg, "send_message", send_message)
+    asyncio.run(tg.send_broadcast_report({"sent": 4, "failed": 0, "group_posted": True, "skipped": 2}))
+    asyncio.run(tg.send_broadcast_report({"sent": 4, "failed": 0, "group_posted": True, "skipped": 0}))
+    assert "Not sent again" in said[0] and ": 2" in said[0] and "Not sent again" not in said[1]
+
+
 def test_post_now_is_off_by_default(monkeypatch, calls):
     from handlers.urgent import handle_post_now
 
