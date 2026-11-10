@@ -30,7 +30,7 @@ class ImageBrief(BaseModel):
     vantage: str = Field(min_length=5, max_length=200)
     device: str = Field(min_length=3, max_length=120)
     time: str = Field(default="", max_length=60)
-    people: Literal["none", "few"] = "none"
+    people: Literal["none", "few", "subject"] = "none"     # "subject": the riders, the players ARE the scene
     avoid: str = Field(default="", max_length=200)     # anything else to keep out of this one
 
 
@@ -50,6 +50,9 @@ PEOPLE = {
     "none": "- No people at all.",
     "few": "- At most two or three people, small, on the left third only, out of focus and turned away; "
            "nobody in the right half and nobody in the foreground.",
+    # a sports event is watched: the players are the picture (the Longchamp horses), nobody else is
+    "subject": "- The only people are the subject named in the scene (the riders, the players), in action, "
+               "at a distance, faces not readable. No spectators, no staff, nobody in the foreground.",
 }
 
 

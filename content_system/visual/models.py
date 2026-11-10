@@ -96,9 +96,11 @@ VERDICT_TOOL = {
                                "perspective. False for a collage, two images joined, a split frame, or a "
                                "foreground pasted in front of a separate background."},
             "crowd": {"type": "boolean", "description": "A crowd, an audience or many people are visible."},
-            "people": {"type": "string", "enum": ["none", "few_left_small_blurred", "elsewhere"],
+            "people": {"type": "string", "enum": ["none", "few_left_small_blurred", "subject_only", "elsewhere"],
                        "description": "none; or a few people only in the left third, small and out of focus; "
-                                      "or people anywhere else (right half, foreground, in focus, large)."},
+                                      "or subject_only: the only people are the subject the brief's scene names "
+                                      "(riders, players), in action, and nobody else; or people anywhere else "
+                                      "(bystanders in the right half or the foreground, in focus, large)."},
             "text_or_logo": {"type": "boolean", "description": "Any readable letters, numbers, signs, logos, "
                              "brand names or watermarks."},
             "matches_brief": {"type": "boolean", "description": "It shows the brief's scene from the brief's "

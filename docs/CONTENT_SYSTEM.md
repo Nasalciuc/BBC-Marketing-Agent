@@ -39,7 +39,8 @@ scene   = "Table Mountain at golden hour over Clifton, the Atlantic below"   # t
 vantage = "a villa terrace above Clifton beach"                              # where the client is
 device  = "the edge of a teak sun lounger with a folded towel"               # the foreground, from there
 time    = "golden hour"                                                      # optional
-people  = "none"                                                             # or "few": small, left, out of focus
+people  = "none"                # or "few": small, left, out of focus; or "subject": the riders, the players
+                                # of the scene are the picture (a polo match, a race) and nobody else is in it
 ```
 
 `railway run python -m content_system photos weeks/2026-W43.toml [--post 2 4] [--again] [--candidates 3]`
@@ -51,7 +52,8 @@ people  = "none"                                                             # o
 - Then `claude-sonnet-5-5` looks at it against the rules:
   - one single photograph (no collage, nothing pasted);
   - no crowd;
-  - people only if the brief allows them, and then small, on the left, out of focus;
+  - people only if the brief allows them: "few" (small, on the left, out of focus) or "subject" (only the
+    riders or players the scene names, in action, and no spectators);
   - no text or logos;
   - the brief's scene, vantage and foreground;
   - a calm upper part for the logo and headline;

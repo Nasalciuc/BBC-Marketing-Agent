@@ -189,6 +189,22 @@ def test_each_rule_refuses_on_its_own(change, problem):
     assert len(found) == 1 and problem in found[0]
 
 
+def test_people_who_are_the_subject_pass_only_when_the_brief_says_so():
+    """At a sports event the client goes to watch: the riders are the picture, nobody else is in it."""
+    subject = BRIEF.model_copy(update={"people": "subject"})
+    assert "The only people are the subject named in the scene" in prompt(subject)
+    assert verdict_problems(GOOD | {"people": "subject_only"}, subject) == []
+    assert verdict_problems(GOOD | {"people": "subject_only"}, BRIEF) == [
+        "people as the subject, and the brief doesn't ask for them"]
+    assert verdict_problems(GOOD | {"people": "none"}, subject) == [
+        "the people the brief's scene names (the riders, the players) aren't in the picture"]
+    assert verdict_problems(GOOD | {"people": "few_left_small_blurred"}, subject) == [
+        "people other than the subject the brief's scene names"]
+    assert verdict_problems(GOOD | {"people": "elsewhere"}, subject) == ["people where they must not be"]
+    assert verdict_problems(GOOD | {"people": "subject_only", "crowd": True}, subject) == ["a crowd in the frame"]
+    assert "subject_only" in VERDICT_TOOL["input_schema"]["properties"]["people"]["enum"]
+
+
 def test_few_people_on_the_left_pass_when_the_brief_allows_them():
     assert verdict_problems(GOOD | {"people": "few_left_small_blurred"}, BRIEF.model_copy(update={"people": "few"})) == []
 

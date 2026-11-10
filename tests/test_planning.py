@@ -414,8 +414,8 @@ def test_the_plan_is_a_manifest_the_loader_accepts(tmp_path):
     path.write_text(plan.manifest, encoding="utf-8")
     week = load_week(path)
     assert [p.campaign_id for p in week.posts] == [f"2026-W47-V4-00{i}" for i in range(1, 6)]
-    assert [p.spec.photo for p in week.posts] == ["wed_art_basel_miami", "thu_tokyo_autumn", "fri_doha_lounge",
-                                                 "sat_cape_town_summer", "sun_mandarin_bangkok"]
+    assert [p.spec.photo for p in week.posts] == ["art_basel_miami", "tokyo_autumn", "doha_lounge",
+                                                 "cape_town_summer", "mandarin_bangkok"]
     assert week.posts[0].spec.dates_start == date(2026, 12, 3)
     assert week.posts[1].spec.image.device == "a lacquered tea tray on tatami"
     assert week.manifest.photos == "assets/curated/week_2026_11_16"
@@ -439,8 +439,8 @@ def test_only_the_date_fields_are_written_as_toml_dates():
 
 
 def test_photo_names_carry_the_plan_s_tag():
-    assert photo_name(date(2026, 11, 18), "art-basel-miami", "a1b2c3") == "wed_art_basel_miami_a1b2c3"
-    long = photo_name(date(2026, 11, 18), "x" * 40, "a1b2c3")
+    assert photo_name("art-basel-miami", "a1b2c3") == "art_basel_miami_a1b2c3"
+    long = photo_name("x" * 40, "a1b2c3")
     assert long.endswith("_a1b2c3") and len(long) <= 40
 
 

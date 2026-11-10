@@ -62,7 +62,9 @@ WRITE = {
             "fare_iatas": {"type": "array", "items": {"type": "string"}}}},
         "image": {"type": "object", "required": ["scene", "vantage", "device"], "properties": {
             "scene": {"type": "string"}, "vantage": {"type": "string"}, "device": {"type": "string"},
-            "time": {"type": "string"}, "people": {"type": "string", "enum": ["none", "few"]}}},
+            "time": {"type": "string"}, "people": {"type": "string", "enum": ["none", "few", "subject"],
+                                               "description": "subject: the riders or players the scene names "
+                                                              "are the picture, and nobody else"}}},
     }},
 }
 

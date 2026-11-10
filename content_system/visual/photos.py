@@ -60,7 +60,7 @@ class Verdict(BaseModel):
     model_config = ConfigDict(extra="ignore")
     one_photograph: StrictBool
     crowd: StrictBool
-    people: Literal["none", "few_left_small_blurred", "elsewhere"]
+    people: Literal["none", "few_left_small_blurred", "subject_only", "elsewhere"]
     text_or_logo: StrictBool
     matches_brief: StrictBool
     calm_top: StrictBool
@@ -93,8 +93,14 @@ def verdict_problems(v: dict[str, Any] | Verdict, brief: ImageBrief) -> list[str
         out.append("a crowd in the frame")
     if verdict.people == "elsewhere":
         out.append("people where they must not be")
+    elif verdict.people == "subject_only" and brief.people != "subject":
+        out.append("people as the subject, and the brief doesn't ask for them")
     elif verdict.people != "none" and brief.people == "none":
         out.append("people, and the brief wants none")
+    elif verdict.people == "none" and brief.people == "subject":
+        out.append("the people the brief's scene names (the riders, the players) aren't in the picture")
+    elif verdict.people != "subject_only" and brief.people == "subject":
+        out.append("people other than the subject the brief's scene names")
     if verdict.text_or_logo:
         out.append("text or a logo in the picture")
     if not verdict.matches_brief:

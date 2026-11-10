@@ -90,10 +90,11 @@ def priced_airports() -> set[str]:
             and calculate_price(ORIGIN_IATA, code, "round_trip", "business")}
 
 
-def photo_name(pick_day: date, candidate_id: str, tag: str) -> str:
-    """The photo's file name: day, subject and the plan's tag — a later plan never reuses an older
-    plan's photo (made from another brief) by accident."""
-    return f"{slug(f'{pick_day:%a}_{candidate_id}')[:32]}_{tag}" if tag else slug(f"{pick_day:%a}_{candidate_id}")
+def photo_name(candidate_id: str, tag: str) -> str:
+    """The photo's file name: the subject and the plan's tag — a later plan never reuses an older
+    plan's photo (made from another brief) by accident. No day in it: `render` puts the day in front
+    of the finished post's name (wed_<photo>.jpg)."""
+    return f"{slug(candidate_id)[:32]}_{tag}" if tag else slug(candidate_id)
 
 
 async def make_plan(call: Call, span: WeekSpan, *, today: date, ideas: list[dict[str, Any]],
@@ -116,7 +117,7 @@ async def make_plan(call: Call, span: WeekSpan, *, today: date, ideas: list[dict
     photos: set[str] = set()
     for index, pick in enumerate(picks, 1):
         cand = by_id[pick.candidate_id]
-        photo = photo_name(pick.day, cand.id, photo_tag)
+        photo = photo_name(cand.id, photo_tag)
         while photo in photos:
             photo += "_2"
         photos.add(photo)
