@@ -1,0 +1,128 @@
+# W46 · 11–15 November 2026 — researched and written in the Claude session of 10 November (sources in claude/POSTARI_W46 in the project), checked with the checks of `content_system plan`.
+
+week = "2026-W46"
+photos = "assets/curated/week_2026_11_09"
+id_tag = "V4"
+
+[[post]]
+day = 2026-11-11
+photo = "rosewood_hong_kong_w46"
+label = "Rosewood Hong Kong"
+name = "Rosewood Hong Kong — the world's best hotel 2026"
+city = "Hong Kong"
+caption_city = "Hong Kong"
+route = "New York → Hong Kong"
+body = "For the second year running, the best hotel in the world is in Hong Kong.\n\nThe World's 50 Best Hotels 2026, voted by more than 800 travel experts and announced in Paris in September: Rosewood Hong Kong, No. 1 again, and the Best Hotel in Asia. A tower on Victoria Harbour, on the Kowloon side: 413 rooms and suites, eleven places to eat, and the whole skyline of the island across the water.\n\nAnd a date to go for: the Hong Kong International Races at Sha Tin, Sunday 13 December.\n\nBusiness class, New York to Hong Kong, nonstop. One flight, and the harbour is outside your window."
+
+[post.design]
+style = "fact"
+lead = "No. 1, again"
+follow = "The world’s best hotel is in Hong Kong."
+line = "Rosewood Hong Kong · 50 Best Hotels 2026"
+
+[post.image]
+scene = "Victoria Harbour and the skyline of Hong Kong Island at blue hour, the towers lit across the water, one small ferry crossing, a clear deep-blue sky above"
+vantage = "inside a high harbour-view suite of a luxury hotel on the Kowloon waterfront, through a floor-to-ceiling window"
+device = "the rim of a freestanding marble bathtub beside the window"
+time = "blue hour, just after sunset"
+people = "none"
+avoid = "legible signs or logos on the buildings"
+
+[[post]]
+day = 2026-11-12
+photo = "scala_otello_w46"
+label = "La Scala — Otello"
+name = "Teatro alla Scala season opening 2026 — Otello"
+city = "Milan"
+caption_city = "Milan"
+route = "JFK → MXP"
+dates_start = 2026-12-07
+dates_end = 2027-01-05
+body = "Verdi was 73 when Otello had its first night at La Scala. The man who conducts it there on 7 December is 73.\n\nLa Scala opens its season, as every year, on the feast of Sant'Ambrogio. This year: Otello, first performed on this stage in 1887, in a new production by Damiano Michieletto, with Myung-Whun Chung opening his first season as Music Director. Opening night is sold out, at up to 3,500 euros a seat. Eight more evenings follow, to 5 January.\n\nUnder a month away. One flight.\n\nBusiness class, New York to Milan. Fly overnight, land in the morning, and be at La Scala by evening."
+
+[post.design]
+style = "offer"
+headline = "Milan. La Scala opens with Otello."
+tag = "La Scala · from 7 Dec"
+to_iata = "MXP"
+
+[post.image]
+scene = "The auditorium of a grand eighteenth-century Italian opera house minutes before the performance: the closed crimson and gold curtain, gilded tiers of boxes curving away, warm house lights, every seat still empty"
+vantage = "a private box on the first tier, a little to the side of the stage"
+device = "the red velvet rail of the box with a pair of brass opera glasses resting on it"
+time = "evening, house lights on"
+people = "none"
+avoid = "an audience, an orchestra, any lettering"
+
+[[post]]
+day = 2026-11-13
+photo = "tokyo_autumn_w46"
+label = "Tokyo in autumn"
+name = "Tokyo — autumn leaves at their peak, late November 2026"
+city = "Tokyo"
+caption_city = "Tokyo"
+route = "New York → Tokyo"
+body = "Tokyo turns gold at the end of November. This year, the forecast names the day.\n\nThe season's final forecast from the Japan Meteorological Corporation: the ginkgo at their peak in Tokyo on 29 November, the red maples on 30 November, a little later than usual after a warm autumn. The avenue at Meiji Jingu Gaien: 300 metres of ginkgo on both sides. And Rikugien, a garden of some 560 autumn trees, open after dark from 25 November to 6 December. Kyoto follows: its maples are forecast for mid-December.\n\nA fortnight to the peak. One flight.\n\nBusiness class, New York to Tokyo. A flat bed on the way, and you land as the city turns."
+
+[post.design]
+style = "editorial"
+big_headline = true
+headline = "Tokyo, the week it turns gold."
+line = "Peak forecast · 29–30 November"
+
+[post.image]
+scene = "A Japanese stroll garden in Tokyo in late autumn: a still pond ringed with crimson maples and golden ginkgo, the colours mirrored in the water, a pale clear sky above"
+vantage = "the open wooden veranda of a teahouse at the water's edge"
+device = "a bowl of matcha on a black lacquer tray on the veranda boards"
+time = "late afternoon"
+people = "none"
+
+[[post]]
+day = 2026-11-14
+photo = "palermo_polo_w46"
+label = "Argentine Open polo"
+name = "133rd Argentine Open — Palermo, final 12 December 2026"
+city = "Buenos Aires"
+caption_city = "Buenos Aires"
+route = "JFK → EZE"
+dates_start = 2026-11-14
+dates_end = 2026-12-12
+body = "Polo has one tournament above all the others. It is played in the middle of Buenos Aires, and it is on now.\n\nThe Argentine Open at Palermo, the 133rd, first played in 1893. La Natividad La Dolfina, last year's champions, take the field at 40 goals, the highest handicap there is; Adolfo Cambiaso has won this title 19 times. Matches this weekend and through November. The final: Saturday 12 December, at half past four.\n\nFour weeks to the final. One flight.\n\nBusiness class, New York to Buenos Aires, nonstop. American flew its new 777 first on this route: seventy suites with doors."
+
+[post.design]
+style = "offer"
+headline = "Palermo. Polo at its highest level."
+tag = "Argentine Open · 12 Dec"
+to_iata = "EZE"
+
+[post.image]
+scene = "High-goal polo at full gallop on an immaculate green field in Palermo, Buenos Aires: two riders and their ponies racing for the ball in mid-field, a line of trees and pale apartment towers far behind, a wide blue sky above"
+vantage = "the front of a private box at the edge of the field, at field level"
+device = "a straw Panama hat on the wooden bench beside you"
+time = "late afternoon sun"
+people = "subject"
+avoid = "grandstands full of spectators, advertising boards"
+
+[[post]]
+day = 2026-11-15
+photo = "vienna_advent_w46"
+label = "Vienna in Advent"
+name = "Vienna — Christmas markets 2026"
+city = "Vienna"
+caption_city = "Vienna"
+route = "JFK → VIE"
+body = "Vienna does December better than anywhere. It began on Friday.\n\nThe Christmas market on Rathausplatz, in front of City Hall, is open every day until 26 December, from ten in the morning to ten at night, with skating paths through the park beside it. The market at Schönbrunn Palace runs to 6 January. The one at the Belvedere opens on 20 November.\n\nGo for a long weekend. Come back with the season done properly.\n\nBusiness class, New York to Vienna. Fly overnight, and be on Rathausplatz the same evening."
+
+[post.design]
+style = "price_hero"
+follow = "Vienna, in the weeks before Christmas."
+line = "Christmas markets · until 26 December"
+to_iata = "VIE"
+
+[post.image]
+scene = "A Christmas market on a grand square in Vienna at dusk: rows of small wooden stalls glowing with warm light and a tall lit Christmas tree before a neo-Gothic city hall, a clear deep blue evening sky above"
+vantage = "an upper-floor window of a building facing the square, looking down and across"
+device = "a steaming mug of mulled wine on the stone windowsill"
+time = "dusk"
+people = "few"
+avoid = "legible signs on the stalls, a dense crowd"
