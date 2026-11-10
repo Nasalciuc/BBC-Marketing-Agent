@@ -146,27 +146,43 @@ async def handle_post_now(
     campaign_id: str, callback_id: str, chat_id: int, message_id: int
 ):
     from keyboards import posted_keyboard
-    from services.supabase_client import update_campaign_status
+    from services.supabase_client import StatusUnavailable, reserve_campaign_for_sending
     from services.telegram_client import (
         answer_callback_query,
         edit_message_reply_markup,
         send_message,
     )
 
+    from config import settings
+
+    if not settings.broadcast_enabled:
+        await answer_callback_query(callback_id, "📤 Sending to clients is off")
+        await send_message(
+            chat_id=chat_id,
+            text="📤 Sending to clients is switched off (`BROADCAST_ENABLED=false`). Nothing was sent.",
+        )
+        return
+
+    # Marked sent before anything goes out: a second tap, a tap after Cancel or a retry sends nothing.
+    # If sending then fails, the campaign stays "sent" — a client message goes out at most once.
+    try:
+        deal = await reserve_campaign_for_sending(campaign_id)
+    except StatusUnavailable as e:
+        await answer_callback_query(callback_id, "❌ Nothing was sent")
+        await send_message(chat_id=chat_id, text=f"❌ Nothing was sent: couldn't reach Supabase (`{e}`).")
+        return
+    if not deal:
+        await answer_callback_query(callback_id, "Already sent or cancelled: nothing was sent")
+        await send_message(
+            chat_id=chat_id,
+            text=f"❌ Nothing was sent: *{campaign_id}* is already sent or cancelled, or does not exist.",
+        )
+        return
+
     await answer_callback_query(callback_id, "📤 Sending...")
     await send_message(chat_id=chat_id, text=f"📤 Broadcasting *{campaign_id}*...")
 
     try:
-        from config import settings
-        from supabase import create_client
-
-        sb = create_client(settings.supabase_url, settings.supabase_key)
-        r = sb.table("campaigns").select("*").eq("campaign_id", campaign_id).execute()
-        if not r.data:
-            await send_message(chat_id=chat_id, text="❌ Not found")
-            return
-
-        deal = r.data[0]
         sent, failed, group_ok = 0, 0, False
 
         if settings.twilio_account_sid:
@@ -195,7 +211,6 @@ async def handle_post_now(
             except Exception as e:
                 log.warning("WAHA: %s", e)
 
-        await update_campaign_status(campaign_id, "sent")
         await edit_message_reply_markup(chat_id, message_id, posted_keyboard())
         await send_message(
             chat_id=chat_id,
@@ -214,17 +229,18 @@ async def handle_post_now(
 async def handle_schedule(
     campaign_id: str, callback_id: str, chat_id: int, message_id: int
 ):
+    from handlers.review import review_reply, set_review_status
     from keyboards import approved_keyboard
-    from services.sheets_client import update_deal_status
-    from services.supabase_client import update_campaign_status
     from services.telegram_client import (
         answer_callback_query,
         edit_message_reply_markup,
         send_message,
     )
 
-    update_deal_status(campaign_id, "approved")
-    await update_campaign_status(campaign_id, "approved")
+    outcome, current = await set_review_status(campaign_id, "approved")
+    if outcome not in ("done", "same"):            # sent, cancelled, unreadable or the Sheet failed
+        await answer_callback_query(callback_id, review_reply(outcome, current, ""))
+        return
     await answer_callback_query(callback_id, "⏰ Scheduled Monday")
     await edit_message_reply_markup(chat_id, message_id, approved_keyboard(campaign_id))
     await send_message(chat_id=chat_id, text=f"⏰ *{campaign_id}* → Monday 10:00 UTC")

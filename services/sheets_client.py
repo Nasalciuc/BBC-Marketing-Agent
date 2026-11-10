@@ -134,11 +134,17 @@ def get_approved_deals() -> list[dict]:
         return []
 
 
-def update_deal_status(campaign_id: str, new_status: str):
-    """Actualizează status-ul unui deal în Sheet."""
+def update_deal_status(campaign_id: str, new_status: str) -> bool:
+    """Actualizează status-ul unui deal în Sheet.
+
+    False only when the Sheet is configured and the write failed. True when it was written, when
+    Sheets is not configured, or when the deal is not in the Sheet (nothing there to keep in step).
+    """
     sheet = _get_sheet()
     if not sheet:
-        return
+        from config import settings
+
+        return not (settings.google_sheets_id and settings.google_service_account_json)
 
     try:
         cell = sheet.find(campaign_id, in_column=1)
@@ -148,5 +154,7 @@ def update_deal_status(campaign_id: str, new_status: str):
             log.info("Updated %s → %s", campaign_id, new_status)
         else:
             log.warning("Campaign %s not found in Sheet", campaign_id)
+        return True
     except Exception as e:
         log.error("Failed to update deal status: %s", e)
+        return False
