@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     hcti_user_id: str = ""
     hcti_api_key: str = ""
 
+    # Kill switches — off until a person turns them on (PR-0)
+    broadcast_enabled: bool = False  # broadcast.py + "Post NOW": Twilio 1:1 + WhatsApp group
+    legacy_regen_enabled: bool = False  # 🔄 Regenerate: generic Gemini image, old 1200x628 layout
+
     # Environment
     debug: bool = False
     environment: str = "development"
@@ -78,6 +82,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",  # a key in .env for another module (CONTENT_*) must not crash every import
     )
 
 

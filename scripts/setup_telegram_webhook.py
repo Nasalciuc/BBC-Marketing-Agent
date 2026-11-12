@@ -15,7 +15,7 @@ RAILWAY_HEALTH = "https://web-production-07bca.up.railway.app/health"
 def load_telegram_config() -> tuple[str, str, str]:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "914794275")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
     env_file = ROOT / ".env"
     if env_file.exists():
         for line in env_file.read_text(encoding="utf-8").splitlines():
@@ -68,11 +68,12 @@ def main() -> int:
     print(f"Pending: {wh.get('pending_update_count', 0)}")
     print(f"Last error: {wh.get('last_error_message', 'none')}")
 
-    need_set = current_url != WEBHOOK_URL
-    if not need_set:
-        print("OK Webhook already set correctly")
-    else:
-        print(f"WARN Webhook needs update -> {WEBHOOK_URL}")
+    if not secret:
+        print("FAIL TELEGRAM_WEBHOOK_SECRET not set locally: the webhook refuses updates without it")
+        return 1
+    # Telegram does not report whether a secret is set, so always re-register with it.
+    need_set = True
+    print(f"Webhook will be (re)registered with the secret -> {WEBHOOK_URL}")
 
     print("\n=== PAS 4: Set Webhook ===")
     if need_set:
